@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from loft.live import person_row
 from loft.live.aliases import Aliases
-from loft.live.determination import Determination
+from loft.live.determination import Determination, Outcome
 from loft.live.errors import Conflict, NotFound, StaleVersion
 from loft.live.identity import relationship_id
 from loft.live.identity_map import BasisKinds, basis_after
@@ -123,7 +123,9 @@ class People:
             base=current.version,
         )
 
-    def resolve(self, person_id: str, decision: str, basis: dict[str, str] | None = None) -> Person | GonePerson | None:
+    def resolve(
+        self, person_id: str, decision: str, basis: dict[str, str] | None = None
+    ) -> Outcome[Person, GonePerson]:
         """One review determination, applied to the record as it stands —
         ``Determination`` owns the four dispositions (TECHSPEC/05 §18.2)."""
         return Determination(decision, basis).apply(self, person_id, gone=GonePerson)

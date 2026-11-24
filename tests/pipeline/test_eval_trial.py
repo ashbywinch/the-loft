@@ -8,9 +8,11 @@ request to the root of the internet.
 
 from __future__ import annotations
 
+import argparse
+
 import pytest
 
-from pipeline.evals.eval_crop_grid import trial_options
+from pipeline.evals.eval_crop_grid import endpoint_flag, trial_options
 from pipeline.model.ai_client import AIClient
 
 
@@ -30,5 +32,13 @@ def test_a_given_base_url_is_the_endpoint() -> None:
 
 @pytest.mark.parametrize("blank", ["", "   "])
 def test_a_blank_base_url_is_refused(blank: str) -> None:
-    with pytest.raises(ValueError, match="blank base URL"):
+    with pytest.raises(ValueError, match="non-blank URL"):
         trial_options("z-ai/glm-4.6v", blank, None)
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_the_command_line_refuses_a_blank_base_url_at_the_flag(blank: str) -> None:
+    """A human's blank flag never reaches the trial: argparse names the flag it
+    came from, which is the provenance a programmatic error cannot give."""
+    with pytest.raises(argparse.ArgumentTypeError, match="blank base URL"):
+        endpoint_flag(blank)

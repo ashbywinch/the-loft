@@ -73,6 +73,14 @@ class CropRead:
     tokens: int
 
 
+def endpoint_flag(value: str) -> str:
+    """A ``--base-url`` value as the command line states it: a blank one is not
+    an endpoint, refused here where argparse names the flag."""
+    if not value.strip():
+        raise argparse.ArgumentTypeError("a blank base URL is not an endpoint — omit the flag for the gateway's")
+    return value
+
+
 def trial_options(model: str, base_url: str | None = None, api_key: str | None = None) -> VlmOptions:
     """One trial's read options: the model under trial, the key it reads with,
     and the endpoint — the gateway's own unless a base URL is given.
@@ -80,9 +88,10 @@ def trial_options(model: str, base_url: str | None = None, api_key: str | None =
     ``None`` is the only spelling of "not given", so an absent flag cannot
     override the endpoint the model config names. A blank base URL is not an
     endpoint (it would reach the client as a request to the root of the
-    internet), so it is refused here rather than sent on."""
+    internet): the command lines refuse it at the flag (`endpoint_flag`), and a
+    programmatic caller is refused by the parameter's own name."""
     if base_url is not None and not base_url.strip():
-        raise ValueError("a blank base URL is not an endpoint — omit it for the gateway's")
+        raise ValueError("trial_options: base_url must be None (the gateway's) or a non-blank URL")
     options = VlmOptions(model=model, api_key=api_key)
     if base_url is None:
         return options
@@ -337,7 +346,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--rows", type=int, default=3)
     parser.add_argument("--work-dir", type=Path, default=LoftPaths.WORK_DIR)
     parser.add_argument("--model", default=ModelConfig.VISION_MODEL, help="the model to trial")
-    parser.add_argument("--base-url", default=None, help="the API base (default: the gateway; a blank one is refused)")
+    parser.add_argument(
+        "--base-url",
+        type=endpoint_flag,
+        default=None,
+        help="the API base (default: the gateway; a blank one is refused)",
+    )
     parser.add_argument(
         "--api-key",
         default=None,

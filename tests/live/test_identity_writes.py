@@ -15,10 +15,11 @@ from typing import Any
 
 import pytest
 
+from loft.live.determination import Absent, Removed, Resolved
 from loft.live.errors import Conflict, NotFound, StaleVersion
 from loft.live.memory import MemoryLiveStore
 from loft.live.store import LiveStore
-from tools.records import GonePerson, Item, Person, Place, Relationship
+from tools.records import Item, Person, Place, Relationship
 from tools.theme import Theme
 
 
@@ -134,10 +135,9 @@ def test_confirming_an_unknown_person_raises(store: Any) -> None:
 
 def test_resolve_attested_confirms_with_knowledge(store: Any) -> None:
     _seed(store, _person(status="proposed"))
-    resolved = store.identities.resolve_person("p-alex", "attested", actor="p-editor")
-    assert isinstance(resolved, Person)
-    assert resolved.status == "confirmed"
-    assert resolved.basis == {"basis": "knowledge", "confidence": "certain"}
+    outcome = store.identities.resolve_person("p-alex", "attested", actor="p-editor")
+    assert isinstance(outcome, Resolved) and outcome.record.status == "confirmed"
+    assert outcome.record.basis == {"basis": "knowledge", "confidence": "certain"}
     assert store.people.require("p-alex").status == "confirmed"
     assert store.verify_chain() == ()
 
@@ -145,10 +145,10 @@ def test_resolve_attested_confirms_with_knowledge(store: Any) -> None:
 def test_resolve_estimated_records_the_basis_verbatim(store: Any) -> None:
     _seed(store, _person(status="proposed"))
     basis = {"text": "Grandma used to say this was the case.", "by": "Alex", "when": "2026-08-09"}
-    resolved = store.identities.resolve_person("p-alex", "estimated", basis, actor="p-editor")
-    assert isinstance(resolved, Person)
-    assert resolved.status == "confirmed"  # estimated is a rendering, not a status
-    assert resolved.basis == {"basis": "recollection", "confidence": "possible", **basis}
+    outcome = store.identities.resolve_person("p-alex", "estimated", basis, actor="p-editor")
+    assert isinstance(outcome, Resolved)
+    assert outcome.record.status == "confirmed"  # estimated is a rendering, not a status
+    assert outcome.record.basis == {"basis": "recollection", "confidence": "possible", **basis}
     stored = store.people.require("p-alex")
     assert stored.basis == {"basis": "recollection", "confidence": "possible", **basis}
     assert len(store.events_for("p-alex")) == 2  # the seed's create, then one supersede
@@ -165,16 +165,16 @@ def test_resolve_estimated_requires_a_basis(store: Any) -> None:
 def test_resolve_pending_writes_nothing(store: Any) -> None:
     _seed(store, _person(status="proposed"))
     before = store.events_for("p-alex")
-    resolved = store.identities.resolve_person("p-alex", "pending", actor="p-editor")
-    assert isinstance(resolved, Person) and resolved.status == "proposed"
+    outcome = store.identities.resolve_person("p-alex", "pending", actor="p-editor")
+    assert isinstance(outcome, Resolved) and outcome.record.status == "proposed"
     assert store.events_for("p-alex") == before
 
 
 def test_resolve_attested_on_a_confirmed_person_writes_nothing(store: Any) -> None:
     _seed(store, _person())
     before = store.events_for("p-alex")
-    resolved = store.identities.resolve_person("p-alex", "attested", actor="p-editor")
-    assert isinstance(resolved, Person) and resolved.status == "confirmed"
+    outcome = store.identities.resolve_person("p-alex", "attested", actor="p-editor")
+    assert isinstance(outcome, Resolved) and outcome.record.status == "confirmed"
     assert store.events_for("p-alex") == before  # byte-identical versions would clutter the chain
 
 
@@ -182,11 +182,11 @@ def test_a_later_determination_supersedes_an_earlier_one(store: Any) -> None:
     _seed(store, _person())
     assert len(store.events_for("p-alex")) == 1
     estimated = store.identities.resolve_person("p-alex", "estimated", {"text": "she told me so"}, actor="p-editor")
-    assert isinstance(estimated, Person)
-    assert estimated.basis is not None and estimated.basis["basis"] == "recollection"
+    assert isinstance(estimated, Resolved)
+    assert estimated.record.basis is not None and estimated.record.basis["basis"] == "recollection"
     assert len(store.events_for("p-alex")) == 2
     gone = store.identities.resolve_person("p-alex", "delete", actor="p-editor")
-    assert isinstance(gone, GonePerson)
+    assert isinstance(gone, Removed) and gone.marker.id == "p-alex"
     assert store.people.get("p-alex") is None
     assert len(store.events_for("p-alex")) == 3
     assert [event["event_type"] for event in store.events_for("p-alex")] == ["created", "superseded", "deleted"]
@@ -201,7 +201,7 @@ def test_resolve_delete_removes_the_person_and_their_edges_in_one_change(store: 
         store.events_for("rel-p-robin-p-alex-spouse", entity_kind="relationship")
     )
     gone = store.identities.resolve_person("p-alex", "delete", actor="p-editor")
-    assert isinstance(gone, GonePerson)
+    assert isinstance(gone, Removed)
     assert store.people.get("p-alex") is None
     assert store.relationships.get("rel-p-robin-p-alex-spouse") is None
     after = len(store.events_for("p-alex")) + len(
@@ -212,8 +212,8 @@ def test_resolve_delete_removes_the_person_and_their_edges_in_one_change(store: 
     assert store.verify_chain() == ()
 
 
-def test_resolve_an_unknown_person_returns_none_and_writes_nothing(store: Any) -> None:
-    assert store.identities.resolve_person("p-ghost", "delete", actor="p-editor") is None
+def test_resolve_an_unknown_person_is_absent_and_writes_nothing(store: Any) -> None:
+    assert store.identities.resolve_person("p-ghost", "delete", actor="p-editor") == Absent("p-ghost")
     assert store.events_for("p-ghost") == []
 
 
@@ -251,8 +251,8 @@ def test_a_rejected_proposal_is_terminal(store: Any) -> None:
     _seed(store, _person(status="proposed"))
     store.identities.reject_person("p-alex", actor="p-editor")
     events = store.events_for("p-alex")
-    resolved = store.identities.resolve_person("p-alex", "attested", actor="p-editor")
-    assert isinstance(resolved, Person) and resolved.status == "rejected"
+    outcome = store.identities.resolve_person("p-alex", "attested", actor="p-editor")
+    assert isinstance(outcome, Resolved) and outcome.record.status == "rejected"
     assert store.events_for("p-alex") == events  # nothing revives a rejected record
 
 

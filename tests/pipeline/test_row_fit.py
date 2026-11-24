@@ -164,6 +164,14 @@ def _gapped(flank: int = 40, waist: int = 2) -> Mark:
     return _mark(_block(80, 99, 0, flank - 1) + _block(100, 117, 10, 10 + waist - 1) + _block(118, 144, 0, flank - 1))
 
 
+def test_a_mark_too_short_for_a_flank_has_no_gap_and_no_sentinel() -> None:
+    """A mark with fewer rows than GAP_WINDOW of flank either side has no gap
+    to find. `_deepest_gap` says so with None — there is no fabricated Gap at
+    row 0 for a caller to read as a real boundary."""
+    rows = [100, 101, 102]
+    assert RowFit._deepest_gap(rows, {y: 1 for y in rows}) is None
+
+
 def test_a_deep_gap_between_two_lines_is_the_boundary() -> None:
     """The deepest thin row is the boundary, and the two sides sit on
     different fitted lines."""

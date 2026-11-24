@@ -12,7 +12,7 @@ the page, its reading and its correction cannot disagree.
 from __future__ import annotations
 
 import json
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from loft.live.errors import Conflict, NotFound, StaleVersion
@@ -22,6 +22,7 @@ from loft.live.page_row import (
     PageProjection,
     PageRow,
     PageState,
+    ReadingPayload,
     ReadingState,
     reading_blob,
     reading_rows,
@@ -30,6 +31,31 @@ from loft.live.person_row import RowPosition
 
 if TYPE_CHECKING:
     from loft.live.change import Change
+
+
+@dataclass(frozen=True)
+class Create:
+    """The write that introduces a page: it has no predecessor to be stale
+    against, and the page carries the version it is created at."""
+
+
+@dataclass(frozen=True)
+class Supersede:
+    """The write that replaces the version the caller read. The base is a
+    version the collection holds, so it is positive by the same rule `PageState`
+    enforces — a write against version 0 is not a page's write."""
+
+    base: int
+
+    def __post_init__(self) -> None:
+        if self.base < 1:
+            raise ValueError(f"a page version starts at 1, not {self.base}")
+
+
+#: The two shapes a page write comes in. A caller names which it is, so the
+#: commit never reads a version as "maybe create" and a base of 0 is not a
+#: write that can be constructed.
+type Write = Create | Supersede
 
 
 class PageCommit:
@@ -41,16 +67,16 @@ class PageCommit:
         projection: PageProjection,
         page: PageState,
         *,
-        base: int | None = None,
+        write: Write,
     ) -> None:
         self.change = change
         self.projection = projection
         self.page = page
-        self.base = base
+        self.write = write
 
     def commit(
         self,
-        reading: dict[str, Any] | None = None,
+        reading: ReadingPayload | None = None,
         *,
         adjustment: bytes | None = None,
         adjustment_at: str = "",
@@ -76,7 +102,7 @@ class PageCommit:
                 event_seq=event["seq"],
                 updated_at=event["recorded_at"],
             ),
-            base=self.base,
+            base=self.write.base if isinstance(self.write, Supersede) else None,
         )
         return saved
 
@@ -86,42 +112,41 @@ class PageCommit:
         it stands. A page cannot carry a version below 1 (`PageState`), so a
         create has nothing to repair."""
         current = self.projection.get(self.page.page_id)
-        if self.base is None:
-            if current is not None:
-                raise Conflict(f"page {self.page.page_id} exists")
-            return "created", self.page.revision
-        if current is None:
-            raise NotFound(f"no page {self.page.page_id}")
-        if current.revision != self.base:
-            raise StaleVersion(current=current, base=self.base)
-        return "superseded", self.base + 1
+        match self.write:
+            case Create():
+                if current is not None:
+                    raise Conflict(f"page {self.page.page_id} exists")
+                return "created", self.page.revision
+            case Supersede(base=base):
+                if current is None:
+                    raise NotFound(f"no page {self.page.page_id}")
+                if current.revision != base:
+                    raise StaleVersion(current=current, base=base)
+                return "superseded", base + 1
 
-    def _reading(self, reading: dict[str, Any] | None, version: int) -> tuple[ReadingState | None, tuple[PageRow, ...]]:
+    def _reading(self, reading: ReadingPayload | None, version: int) -> tuple[ReadingState | None, tuple[PageRow, ...]]:
         """The reading blob, stored and counted — the rows derive from it.
 
-        The reading arrives in the blob's own wire shape (the read stage's
-        output, `reading_blob`'s), so its fields are read once here, before the
-        blob is built: the words and the correction are the caller's, and the
-        blob is their constructor's."""
+        The reading arrives as `ReadingPayload`, so its words and its correction
+        are typed fields rather than a wire dict read through ``.get(...) or``.
+        The words `ReadingState` counts are the words the blob was built from."""
         if reading is None:
             return None, ()
-        words = list(reading.get("words") or [])
-        corrected = str(reading.get("corrected") or "")
         blob = reading_blob(
             self.page.page_id,
-            reading,
-            words,
+            reading.blob,
+            list(reading.words),
             rotation=self.page.rotation,
             revision=version,
         )
         sha = self.change.content.put(_canonical_bytes(blob), mime="application/json")
-        rows = reading_rows(self.page.page_id, blob, revision=version, corrected=bool(corrected))
+        rows = reading_rows(self.page.page_id, blob, revision=version, corrected=bool(reading.corrected))
         state = ReadingState(
             page_id=self.page.page_id,
             reading_sha=sha,
-            corrected_sha=corrected,
+            corrected_sha=reading.corrected,
             rows=len(rows),
-            words=len(blob.get("words") or []),
+            words=len(reading.words),
         )
         return state, rows
 

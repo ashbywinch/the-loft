@@ -55,8 +55,19 @@ def to_row(person: Person, position: RowPosition) -> tuple[Any, ...]:
     )
 
 
-def _precision_of(text: str) -> str:
-    return {4: "year", 7: "month", 10: "exact"}.get(len(text.strip()), "year")
+def _granularity(parts: dict[str, int] | None) -> str | None:
+    """A date's precision, read from the DateValue's own parts: the day it
+    states is exact, the month is a month, the year alone is a year, and no
+    parts state no precision. The stored date and its precision come from one
+    parse, so they cannot disagree — and a date whose text states no month is
+    not called one."""
+    if not parts:
+        return None
+    if "day" in parts:
+        return "exact"
+    if "month" in parts:
+        return "month"
+    return "year"
 
 
 class PersonProjection:
@@ -108,6 +119,7 @@ class PersonProjection:
             start = str(residence.get("from", ""))
             end = str(residence.get("to", ""))
             status = str(residence.get("status", "confirmed"))
+            value = date_value(start, "period", end or None)
             self.connection.execute(
                 """INSERT INTO person_residences (person_id, place_id, date_json, from_date, to_date,
                                                   from_precision, to_precision, status, basis_json)
@@ -115,11 +127,11 @@ class PersonProjection:
                 (
                     person.id,
                     place,
-                    json.dumps(date_value(start, "period", end or None), sort_keys=True),
+                    json.dumps(value, sort_keys=True),
                     start,
                     end or None,
-                    _precision_of(start),
-                    _precision_of(end) if end else None,
+                    _granularity(value["from"]),
+                    _granularity(value["to"]),
                     status,
                     None,
                 ),

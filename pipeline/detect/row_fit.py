@@ -103,7 +103,7 @@ class RowFit:
         space."""
         row_runs = self._row_runs(shape)
         gap = self._deepest_gap(row_runs.rows, row_runs.runs)
-        if gap.depth >= RowFit.GAP_FRACTION:
+        if gap is None or gap.depth >= RowFit.GAP_FRACTION:
             return None  # strict: a tie at the boundary is a letter's internal gap
         per_row = shape.rows()
         upper = [y for y in row_runs.rows if y <= gap.row]
@@ -121,10 +121,15 @@ class RowFit:
         return RowRuns(rows=sorted(runs), runs=runs)
 
     @staticmethod
-    def _deepest_gap(rows: list[int], runs: dict[int, int]) -> Gap:
+    def _deepest_gap(rows: list[int], runs: dict[int, int]) -> Gap | None:
         """The deepest local ink minimum among the rows, away from the mark's
-        edges, with both flanks substantial."""
-        best = Gap(depth=1.0, row=rows[0])
+        edges, with both flanks substantial — or ``None`` when the rows hold no
+        such minimum.
+
+        A mark with too few rows to have GAP_WINDOW of flank on both sides of
+        any row has no gap to find: there is no sentinel to mistake for one, so
+        a caller reads "no gap" as the absence it is."""
+        best: Gap | None = None
         for i, y in enumerate(rows):
             if i < RowFit.GAP_WINDOW or i >= len(rows) - RowFit.GAP_WINDOW:
                 continue
@@ -134,7 +139,7 @@ class RowFit:
             if flank < RowFit.GAP_MIN_FLANK:
                 continue
             score = runs[y] / flank
-            if score < best.depth:
+            if best is None or score < best.depth:
                 best = Gap(depth=score, row=y)
         return best
 

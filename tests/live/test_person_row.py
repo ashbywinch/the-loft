@@ -9,6 +9,7 @@ reach the "stale" branch for a record that simply already exists.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -105,6 +106,20 @@ def test_a_write_replaces_the_residences_rather_than_appending(projection: Perso
     read = projection.get("p-aria")
     assert read is not None
     assert [(entry["place"], entry["from"], entry["to"]) for entry in read.residence] == [("pl-riverfield", "1940", "")]
+
+
+def test_a_residence_precisions_are_the_granularity_its_dates_state(
+    projection: PersonProjection, store: LiveStore
+) -> None:
+    """The precision written beside a residence date is read from the same
+    DateValue the date itself is stored as: the parts it states are the
+    precision, so a month is never called a year and a stored date cannot
+    disagree with its own precision."""
+    residence = {"place": "pl-marlock", "from": "1930-05", "to": "1940-06-01"}
+    projection.write(_person(residence=(residence,)), _position(), base=None)
+    row = store.connection.execute("SELECT date_json, from_precision, to_precision FROM person_residences").fetchone()
+    assert (row["from_precision"], row["to_precision"]) == ("month", "exact")
+    assert json.loads(row["date_json"])["from"] == {"year": 1930, "month": 5}
 
 
 def test_a_delete_removes_the_person_and_their_residences(projection: PersonProjection, store: LiveStore) -> None:

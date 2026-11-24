@@ -12,6 +12,7 @@ from typing import override
 import pytest
 
 from loft.live.compat import CompatibilityExport
+from loft.live.determination import Absent, Removed, Resolved
 from loft.live.import_identity import sync_from_archive
 from loft.live.memory import MemoryLiveStore
 from pipeline.identification import Identification
@@ -718,21 +719,22 @@ def test_a_later_determination_supersedes_an_earlier_one() -> None:
     assert before is not None
     assert len(archive._identity_versions("people")) == 1
     # p-x is already confirmed: confirming writes nothing, the determination stands
-    assert archive.resolve_person("p-x", "attested", None) == before.record("p-x")
+    stood = archive.resolve_person("p-x", "attested", None)
+    assert isinstance(stood, Resolved) and stood.record == before.record("p-x")
     assert len(archive._identity_versions("people")) == 1  # nothing written
-    archive.resolve_person("p-x", "pending", None)
+    assert isinstance(archive.resolve_person("p-x", "pending", None), Resolved)
     assert len(archive._identity_versions("people")) == 1  # a keep changes nothing
     # a later determination supersedes the confirmation
     estimated = archive.resolve_person("p-x", "estimated", {"text": "she told me so"})
-    assert isinstance(estimated, Person) and estimated.status == "estimated"
+    assert isinstance(estimated, Resolved) and estimated.record.status == "estimated"
     assert len(archive._identity_versions("people")) == 2
     # …and a delete supersedes that
-    assert archive.resolve_person("p-x", "delete", None) is not None
+    assert isinstance(archive.resolve_person("p-x", "delete", None), Removed)
     table = archive.get_identity("people")
     assert table is not None and not table.has("p-x")
     assert len(archive._identity_versions("people")) == 3
     # an id the table never held: nothing to apply, nothing written
-    assert archive.resolve_person("p-nope", "delete", None) is None
+    assert archive.resolve_person("p-nope", "delete", None) == Absent("p-nope")
     assert len(archive._identity_versions("people")) == 3
 
 

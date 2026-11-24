@@ -16,8 +16,8 @@ from typing import Any
 import pytest
 
 from loft.live.errors import Conflict, NotFound, StaleVersion
-from loft.live.page_commit import PageCommit
-from loft.live.page_row import PageState
+from loft.live.page_commit import Create, PageCommit, Supersede
+from loft.live.page_row import PageState, ReadingPayload
 from loft.live.store import LiveStore
 
 PAGE_ID = "batch-1/page-01.jpg"
@@ -54,13 +54,24 @@ def _reading(text: str = "Hello") -> dict[str, Any]:
     }
 
 
+def _payload(text: str = "Hello") -> ReadingPayload:
+    """The reading as the commit takes it — the wire record through the one
+    boundary that types it."""
+    return ReadingPayload.from_wire(_reading(text))
+
+
 def _commit(change: Any, *, base: int | None = None, revision: int = 1) -> PageCommit:
-    return PageCommit(change, change.pages.projection, _page(revision=revision), base=base)
+    return PageCommit(
+        change,
+        change.pages.projection,
+        _page(revision=revision),
+        write=Create() if base is None else Supersede(base),
+    )
 
 
 def test_a_create_appends_one_event_and_writes_the_row(store: LiveStore) -> None:
     with store.change(actor="import") as change:
-        saved = _commit(change).commit(reading=_reading())
+        saved = _commit(change).commit(reading=_payload())
     assert saved.revision == 1
     events = store.events_for(PAGE_ID, entity_kind="page")
     assert [event["event_type"] for event in events] == ["created"]
@@ -76,6 +87,8 @@ def test_a_page_cannot_be_built_below_its_first_version() -> None:
         _page(revision=0)
     with pytest.raises(ValueError, match="must carry a version"):
         _page(revision=-1)
+    with pytest.raises(ValueError, match="starts at 1"):
+        Supersede(0)
 
 
 def test_a_commit_stores_the_reading_and_the_adjustment_together(store: LiveStore) -> None:
@@ -83,7 +96,7 @@ def test_a_commit_stores_the_reading_and_the_adjustment_together(store: LiveStor
     correction are stored in the same version, and the rows derive from the
     reading."""
     with store.change(actor="review") as change:
-        saved = _commit(change).commit(reading=_reading(), adjustment=b'{"lines": []}', adjustment_at="2026-01-01")
+        saved = _commit(change).commit(reading=_payload(), adjustment=b'{"lines": []}', adjustment_at="2026-01-01")
     assert saved.revision == 1
     reading = store.pages.reading(PAGE_ID)
     assert reading is not None and reading.rows == 1
@@ -93,7 +106,7 @@ def test_a_commit_stores_the_reading_and_the_adjustment_together(store: LiveStor
 
 def test_a_create_stores_the_reading_blob_and_counts_it(store: LiveStore) -> None:
     with store.change(actor="import") as change:
-        _commit(change).commit(reading=_reading())
+        _commit(change).commit(reading=_payload())
     reading = store.pages.reading(PAGE_ID)
     assert reading is not None and (reading.rows, reading.words) == (1, 1)
     blob = store.pages.reading_blob(PAGE_ID)
@@ -103,17 +116,17 @@ def test_a_create_stores_the_reading_blob_and_counts_it(store: LiveStore) -> Non
 
 def test_a_create_that_finds_the_page_is_a_conflict(store: LiveStore) -> None:
     with store.change(actor="import") as change:
-        _commit(change).commit(reading=_reading())
+        _commit(change).commit(reading=_payload())
     with pytest.raises(Conflict, match="exists"), store.change(actor="import") as change:
-        _commit(change).commit(reading=_reading())
+        _commit(change).commit(reading=_payload())
     assert len(store.events_for(PAGE_ID, entity_kind="page")) == 1
 
 
 def test_a_supersede_is_the_next_version_and_replaces_the_rows(store: LiveStore) -> None:
     with store.change(actor="import") as change:
-        _commit(change).commit(reading=_reading("Hello"))
+        _commit(change).commit(reading=_payload("Hello"))
     with store.change(actor="import") as change:
-        saved = _commit(change, base=1).commit(reading=_reading("Changed"))
+        saved = _commit(change, base=1).commit(reading=_payload("Changed"))
     assert saved.revision == 2
     assert [event["event_type"] for event in store.events_for(PAGE_ID, entity_kind="page")] == [
         "created",
@@ -125,17 +138,17 @@ def test_a_supersede_is_the_next_version_and_replaces_the_rows(store: LiveStore)
 
 def test_a_supersede_of_an_unknown_page_is_not_found(store: LiveStore) -> None:
     with pytest.raises(NotFound, match=PAGE_ID), store.change(actor="import") as change:
-        _commit(change, base=1).commit(reading=_reading())
+        _commit(change, base=1).commit(reading=_payload())
     assert store.events_for(PAGE_ID, entity_kind="page") == []
 
 
 def test_a_stale_base_is_refused_with_the_page_as_it_stands(store: LiveStore) -> None:
     with store.change(actor="import") as change:
-        _commit(change).commit(reading=_reading("Hello"))
+        _commit(change).commit(reading=_payload("Hello"))
     with store.change(actor="import") as change:
-        _commit(change, base=1).commit(reading=_reading("Second"))
+        _commit(change, base=1).commit(reading=_payload("Second"))
     with pytest.raises(StaleVersion) as caught, store.change(actor="import") as change:
-        _commit(change, base=1).commit(reading=_reading("Lost"))
+        _commit(change, base=1).commit(reading=_payload("Lost"))
     assert caught.value.current is not None and caught.value.current.revision == 2
     assert [row.text for row in store.pages.rows(PAGE_ID)] == ["Second"]  # the refused write changed nothing
 
@@ -150,7 +163,7 @@ def test_a_commit_with_no_reading_stores_no_blob_and_no_rows(store: LiveStore) -
 def test_the_adjustment_is_stored_as_the_pages_correction(store: LiveStore) -> None:
     drawn = b'{"lines":[]}'
     with store.change(actor="import") as change:
-        _commit(change).commit(reading=_reading(), adjustment=drawn, adjustment_at="2026-01-01T00:00:00+00:00")
+        _commit(change).commit(reading=_payload(), adjustment=drawn, adjustment_at="2026-01-01T00:00:00+00:00")
     adjustment = store.pages.adjustment(PAGE_ID)
     assert adjustment is not None
     assert adjustment.sha256 == hashlib.sha256(drawn).hexdigest()

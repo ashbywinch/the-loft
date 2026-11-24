@@ -15,12 +15,13 @@ from typing import TYPE_CHECKING, Any
 
 from loft.live.content import ContentStore
 from loft.live.errors import Conflict, NotFound
-from loft.live.page_commit import PageCommit, page_payload
+from loft.live.page_commit import Create, PageCommit, Supersede, page_payload
 from loft.live.page_row import (
     AdjustmentState,
     PageProjection,
     PageRow,
     PageState,
+    ReadingPayload,
     ReadingState,
 )
 from loft.live.person_row import RowPosition
@@ -84,8 +85,10 @@ class Pages:
         change = self.change
         if change is None:
             raise Conflict("pages.save needs a change")
-        commit = PageCommit(change, self.projection, page, base=base)
-        return commit.commit(reading, adjustment=adjustment, adjustment_at=adjustment_at)
+        write = Create() if base is None else Supersede(base)
+        payload = None if reading is None else ReadingPayload.from_wire(reading)
+        commit = PageCommit(change, self.projection, page, write=write)
+        return commit.commit(payload, adjustment=adjustment, adjustment_at=adjustment_at)
 
     def correct(self, page_id: str, adjustments: bytes, *, adjustment_at: str) -> PageState:
         """Record the reviewer's drawn lines as the page's current correction —

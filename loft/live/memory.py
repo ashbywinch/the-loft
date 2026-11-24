@@ -18,7 +18,7 @@ from loft.live import item_row
 from loft.live.aliases import Alias, MemoryAliases
 from loft.live.batch_row import BatchState, ScanState
 from loft.live.batches import batch_from_payload, batch_payload
-from loft.live.determination import Determination
+from loft.live.determination import Determination, Outcome
 from loft.live.document_row import DocumentPage, DocumentState
 from loft.live.documents import document_from_payload, document_payload
 from loft.live.errors import Conflict, NotFound, StaleVersion
@@ -28,8 +28,16 @@ from loft.live.identity import ORG, PLACE, RELATIONSHIP, THEME, Kind, record_id,
 from loft.live.identity_map import BasisKinds, basis_after
 from loft.live.item_row import AssetRecord, ItemAsset, ItemContent, ItemRef
 from loft.live.items import ContentInput, build_contents, item_payload, payload_assets, payload_contents
-from loft.live.page_commit import page_from_payload, page_payload
-from loft.live.page_row import AdjustmentState, PageRow, PageState, ReadingState, reading_blob, reading_rows
+from loft.live.page_commit import Create, Supersede, page_from_payload, page_payload
+from loft.live.page_row import (
+    AdjustmentState,
+    PageRow,
+    PageState,
+    ReadingPayload,
+    ReadingState,
+    reading_blob,
+    reading_rows,
+)
 from loft.live.review_row import (
     ReviewDecisionRow,
     ReviewMessageRow,
@@ -351,7 +359,9 @@ class _MemoryPeople:
             base=current.version,
         )
 
-    def resolve(self, person_id: str, decision: str, basis: dict[str, str] | None = None) -> Person | GonePerson | None:
+    def resolve(
+        self, person_id: str, decision: str, basis: dict[str, str] | None = None
+    ) -> Outcome[Person, GonePerson]:
         return Determination(decision, basis).apply(self, person_id, gone=GonePerson)
 
     def reject(self, person_id: str) -> Person:
@@ -709,26 +719,27 @@ class _MemoryPages:
         change = self.change
         if change is None:
             raise Conflict("pages.save needs a change")
+        write = Create() if base is None else Supersede(base)
         current = self.get(page.page_id)
-        if base is None:
-            if current is not None:
-                raise Conflict(f"page {page.page_id} exists")
-            event_type = "created"
-            version = page.revision if page.revision > 0 else 1
-        else:
-            if current is None:
-                raise NotFound(f"no page {page.page_id}")
-            if current.revision != base:
-                raise StaleVersion(current=current, base=base)
-            event_type = "superseded"
-            version = base + 1
+        match write:
+            case Create():
+                if current is not None:
+                    raise Conflict(f"page {page.page_id} exists")
+                event_type, version = "created", page.revision
+            case Supersede(base=base):
+                if current is None:
+                    raise NotFound(f"no page {page.page_id}")
+                if current.revision != base:
+                    raise StaleVersion(current=current, base=base)
+                event_type, version = "superseded", base + 1
+        payload = None if reading is None else ReadingPayload.from_wire(reading)
         reading_state: ReadingState | None = None
         rows: tuple[PageRow, ...] = ()
-        if reading is not None:
+        if payload is not None:
             blob = reading_blob(
                 page.page_id,
-                reading,
-                list(reading.get("words") or []),
+                payload.blob,
+                list(payload.words),
                 rotation=page.rotation,
                 revision=version,
             )
@@ -736,9 +747,8 @@ class _MemoryPages:
                 json.dumps(blob, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8"),
                 mime="application/json",
             )
-            corrected = str(blob.get("corrected", ""))
-            rows = reading_rows(page.page_id, blob, revision=version, corrected=bool(corrected))
-            reading_state = ReadingState(page.page_id, sha, corrected, len(rows), len(blob.get("words") or []))
+            rows = reading_rows(page.page_id, blob, revision=version, corrected=bool(payload.corrected))
+            reading_state = ReadingState(page.page_id, sha, payload.corrected, len(rows), len(payload.words))
         adjustment_state: AdjustmentState | None = None
         if adjustment is not None:
             adjustment_state = AdjustmentState(

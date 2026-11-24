@@ -37,6 +37,15 @@ def test_a_basis_in_neither_shape_is_refused_for_its_text() -> None:
         Person.from_dict({"id": "p-aria", "name": "Aria Barlow", "basis": {"by": "Aria"}})
 
 
+def test_a_basis_that_is_not_a_record_is_refused_before_its_keys_are_read() -> None:
+    """The field's value is the wire's, so its type is checked at this seam: a
+    string would pass a substring test on `basis` and then have no keys, and a
+    list is not evidence either. Both are refused as what they are."""
+    for value in ("knowledge", ["text"]):
+        with pytest.raises(ValueError, match="a basis is a record"):
+            Person.from_dict({"id": "p-aria", "name": "Aria Barlow", "basis": value})
+
+
 def test_a_confirmed_record_writes_no_status_on_the_wire() -> None:
     """The identity wire's own rule: the status appears only when it is not
     confirmed, so a confirmed record's dict has no `status` key — and the

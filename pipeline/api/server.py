@@ -38,6 +38,7 @@ from loft.live.compat import CompatibilityExport, legacy_person
 from loft.live.compat_items import ItemCompatibility
 from loft.live.compat_pages import PageCompatibility
 from loft.live.compat_reviews import ImportsCompatibility
+from loft.live.determination import Absent, Removed, Resolved
 from loft.live.errors import LiveError
 from loft.live.import_identity import sync_from_archive
 from loft.live.import_items import sync_items
@@ -481,13 +482,16 @@ def build_app(
             pre_person = people_table.record(person_id) if people_table else None
         person_name = pre_person.name if pre_person else person_id
         try:
-            record = archive.resolve_person(person_id, decision, basis, actor=actor)
+            outcome = archive.resolve_person(person_id, decision, basis, actor=actor)
         except ValueError as e:
             return JSONResponse(ErrorAnswer(str(e)).to_dict(), status_code=400)
-        if live is not None and isinstance(record, Person):
-            person_payload = legacy_person(record)
-        else:
-            person_payload = record.to_dict() if record is not None else None
+        match outcome:
+            case Absent():
+                person_payload = None
+            case Removed(marker):
+                person_payload = marker.to_dict()
+            case Resolved(record):
+                person_payload = legacy_person(record) if live is not None else record.to_dict()
         # the review record — the decision and the confirmation message the
         # family saw, both persisted (the transcript is the messages)
         when = datetime.now(UTC).date().isoformat()

@@ -107,34 +107,55 @@ class RecordField:
             raise ValueError(f"unknown {label}: {value!r}")
         return value
 
+    #: The two shapes a basis states: the live model's disposition (a
+    #: knowledge/recollection kind with a confidence) and the evidence a
+    #: reviewer or a document supplied (its own words).
+    DISPOSITION: ClassVar[tuple[str, str]] = ("basis", "confidence")
+    EVIDENCE: ClassVar[tuple[str, ...]] = ("text", "by", "when", "note")
+
     def basis(self) -> dict[str, str] | None:
-        """The evidence the field states — a person's or place's ``basis``
-        {text, by, when, note?}: for an estimate, the reviewer's own words;
-        for an identification's proposal, the document's own words. An empty
-        text is not a basis (the field is absent or it says something)."""
+        """The evidence the field states — a person's or place's ``basis``: for
+        an estimate, the reviewer's own words; for an identification's
+        proposal, the document's own words.
+
+        The shape is decided by whether the record states a disposition at all:
+        either half of `DISPOSITION` selects it, and then both halves are
+        required. A record stating half a disposition is refused, never read as
+        evidence with the other half silently dropped. An empty text is not a
+        basis (the field is absent or it says something)."""
         basis = self.raw.get(self.key)
         if basis is None:
             return None
-        if "basis" in basis or "confidence" in basis:
-            # the live model's disposition basis: knowledge/recollection + certain/
-            # possible, with the reviewer's own words carried alongside
-            kind = str(basis.get("basis", "")).strip()
-            confidence = str(basis.get("confidence", "")).strip()
-            if not kind or not confidence:
-                raise ValueError(f"invalid {self.key}: {basis!r} — basis and confidence are required")
-            out = {"basis": kind, "confidence": confidence}
-            for field_name in ("text", "by", "when", "note"):
-                value = str(basis.get(field_name, "")).strip()
-                if value:
-                    out[field_name] = value
-            return out
-        text = str(basis.get("text", "")).strip()
+        if not isinstance(basis, Mapping):
+            raise ValueError(f"invalid {self.key}: {basis!r} — a basis is a record, not {type(basis).__name__}")
+        if any(half in basis for half in self.DISPOSITION):
+            return self._disposition(basis)
+        return self._evidence(basis)
+
+    def _disposition(self, basis: Mapping[str, Any]) -> dict[str, str]:
+        """The live model's disposition basis: the kind and confidence pair,
+        with whatever of the reviewer's own words it carries alongside."""
+        kind = str(basis.get("basis") or "").strip()
+        confidence = str(basis.get("confidence") or "").strip()
+        if not kind or not confidence:
+            raise ValueError(f"invalid {self.key}: {dict(basis)!r} — basis and confidence are required together")
+        out = {"basis": kind, "confidence": confidence}
+        for field_name in self.EVIDENCE:
+            value = str(basis.get(field_name) or "").strip()
+            if value:
+                out[field_name] = value
+        return out
+
+    def _evidence(self, basis: Mapping[str, Any]) -> dict[str, str]:
+        """The document's or the reviewer's evidence: its text, who stated it
+        and when, with a note where one is written."""
+        text = str(basis.get("text") or "").strip()
         if not text:
-            raise ValueError(f"invalid {self.key}: {basis!r} — the text is required")
+            raise ValueError(f"invalid {self.key}: {dict(basis)!r} — the text is required")
         return {
             "text": text,
-            "by": str(basis.get("by", "")).strip(),
-            "when": str(basis.get("when", "")).strip(),
+            "by": str(basis.get("by") or "").strip(),
+            "when": str(basis.get("when") or "").strip(),
             **({"note": str(basis["note"]).strip()} if basis.get("note") else {}),
         }
 

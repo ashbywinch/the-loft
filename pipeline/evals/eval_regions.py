@@ -24,7 +24,7 @@ import numpy as np
 from PIL import Image
 
 from pipeline.artefacts import BatchArtefacts
-from pipeline.evals.eval_crop_grid import read_crop, trial_options
+from pipeline.evals.eval_crop_grid import endpoint_flag, read_crop, trial_options
 from pipeline.evals.eval_geometry import CropReading
 from pipeline.layout import Layout
 from pipeline.layout_line import LayoutLine
@@ -206,7 +206,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("batch_id")
     parser.add_argument("page")
     parser.add_argument("--model", default="z-ai/glm-4.6v")
-    parser.add_argument("--base-url", default="https://openrouter.ai/api/v1")
+    parser.add_argument("--base-url", type=endpoint_flag, default="https://openrouter.ai/api/v1")
     parser.add_argument("--api-key", default=None)
     parser.add_argument("--work-dir", type=Path, default=LoftPaths.WORK_DIR)
     args = parser.parse_args(argv)

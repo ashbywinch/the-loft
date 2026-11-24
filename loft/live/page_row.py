@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
@@ -263,11 +264,42 @@ class PageProjection:
         )
 
 
+@dataclass(frozen=True)
+class ReadingPayload:
+    """A page's reading as it crosses into the store: the read stage's own
+    record, with the two fields the write reads given their types.
+
+    The blob is content-addressed and the rows derive from it, so the words the
+    commit stores and the count it records are this one list. Reading them at
+    the boundary — not through ``.get("words") or []`` in each writer — is what
+    makes a reading whose ``words`` is a string a refusal here rather than a
+    silent list of characters."""
+
+    blob: Mapping[str, Any]
+    words: tuple[Mapping[str, Any], ...]
+    corrected: str
+
+    @classmethod
+    def from_wire(cls, raw: Mapping[str, Any]) -> ReadingPayload:
+        """The read stage's record as the payload: ``words`` is a list of word
+        records, ``corrected`` a string or absent."""
+        words = raw.get("words")
+        if words is None:
+            words = []
+        if not isinstance(words, list) or not all(isinstance(word, Mapping) for word in words):
+            raise ValueError(f"the reading's words must be a list of word records, not {type(words).__name__}")
+        corrected = raw.get("corrected")
+        if corrected is not None and not isinstance(corrected, str):
+            raise ValueError(f"the reading's correction must be a string, not {type(corrected).__name__}")
+        return cls(blob=raw, words=tuple(words), corrected=corrected or "")
+
+
 def reading_blob(
-    page: str, raw: dict[str, Any], words: list[dict[str, Any]], *, rotation: int, revision: int
+    page: str, raw: Mapping[str, Any], words: Sequence[Mapping[str, Any]], *, rotation: int, revision: int
 ) -> dict[str, Any]:
     """The full-reading blob: the old reading's lines plus its words, with the
-    page's applied orientation and revision named as the target's fields."""
+    page's applied orientation and revision named as the target's fields. The
+    correction is the empty string when absent, never ``None``."""
     blob = dict(raw)
     blob["page"] = page
     blob["rotation"] = rotation
@@ -276,7 +308,7 @@ def reading_blob(
     blob.setdefault("height", 0)
     blob.setdefault("lines", [])
     blob["words"] = words
-    blob.setdefault("corrected", "")
+    blob["corrected"] = str(blob.get("corrected") or "")
     return blob
 
 

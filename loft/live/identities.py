@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Any
 
-from loft.live.determination import Determination
+from loft.live.determination import Determination, Outcome
 from loft.live.errors import Conflict
 from loft.live.protocols import IdentityStore
 from tools.gone_person import GonePerson
@@ -44,13 +44,13 @@ class Identities:
 
     def resolve_person(
         self, person_id: str, decision: str, basis: dict[str, str] | None = None, *, actor: str
-    ) -> Person | GonePerson | None:
+    ) -> Outcome[Person, GonePerson]:
         with self.store.change(actor=actor, note=f"{decision} {person_id}") as change:
             return change.people.resolve(person_id, decision, basis)
 
     def resolve_place(
         self, place_id: str, decision: str, basis: dict[str, str] | None = None, *, actor: str
-    ) -> Place | GonePlace | None:
+    ) -> Outcome[Place, GonePlace]:
         with self.store.change(actor=actor, note=f"{decision} {place_id}") as change:
             return Determination(decision, basis).apply(change.places, place_id, gone=GonePlace)
 

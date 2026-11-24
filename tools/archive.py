@@ -22,6 +22,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast, overload
 
+from loft.live.determination import Absent, Outcome, Removed, Resolved
 from loft.live.errors import Conflict
 from loft.live.items import ContentInput, default_trust
 from loft.live.page_writes import PageWork
@@ -139,6 +140,30 @@ def _import_session_apply(table: ImportsTable | None) -> ImportsTable:
     if table.has("import-documents"):
         return table  # already present — a no-op writes nothing
     return table.with_session(session)
+
+
+def _person_outcome(record: Person | GonePerson | None, person_id: str) -> Outcome[Person, GonePerson]:
+    """The people table's answer as the determination's `Outcome` — the
+    legacy table spells "no such record" as ``None``; this is the one place
+    that spelling meets the three named cases."""
+    if record is None:
+        return Absent(person_id)
+    if isinstance(record, GonePerson):
+        return Removed(record)
+    return Resolved(record)
+
+
+def _outcome_record(
+    outcome: Outcome[Person, GonePerson] | Outcome[Place, GonePlace],
+) -> Person | Place | GonePerson | GonePlace | None:
+    """The named outcome as the identification flow's record-or-None — the
+    one translation back, for the stage-8 flow whose ``None`` is "no record
+    to mention"."""
+    if isinstance(outcome, Absent):
+        return None
+    if isinstance(outcome, Removed):
+        return outcome.marker
+    return outcome.record
 
 
 # The proposed-queue record kinds — the person/place methods differ only in
@@ -621,13 +646,13 @@ class Archive:
         """Apply one determination to a proposed record and return it as it
         now stands — the live service's rule, or the table's own rule."""
         if self.identities is not None:
-            record = (
+            outcome = (
                 self.identities.resolve_person(record_id, decision, basis, actor=actor)
                 if kind == "person"
                 else self.identities.resolve_place(record_id, decision, basis, actor=actor)
             )
             self._identity_changed()
-            return record
+            return _outcome_record(outcome)
         if kind == "person":
             return self._resolve_person_proposal(record_id, decision, basis)
         return self._resolve_place_proposal(record_id, decision, basis)
@@ -926,7 +951,7 @@ class Archive:
 
     def resolve_person(
         self, person_id: str, decision: str, basis: dict[str, str] | None = None, *, actor: str = "import"
-    ) -> Person | GonePerson | None:
+    ) -> Outcome[Person, GonePerson]:
         """The review's four determinations for a person (user): the decision
         vocabulary is NOT the status vocabulary — "confirm" is a status, never an
         action. ``attested`` -> confirmed (the reviewer's own verified word);
@@ -936,15 +961,15 @@ class Archive:
 
         Every determination is applied to the record as it stands: a later
         determination supersedes an earlier one, and staleness is never detected
-        and never tracked (2026-10-21, user). Returns the record as it now stands
-        — None for an id the table does not hold. The determination itself is the
-        table's own rule (PeopleTable.resolved); this seam only makes the
+        and never tracked (2026-10-21, user). Returns `Outcome`'s named case —
+        `Absent` for an id the table does not hold. The determination itself is
+        the table's own rule (PeopleTable.resolved); this seam only makes the
         read-apply-write atomic. When the live service is bound, the
         determination is one `Change` and the compatibility export follows."""
         if self.identities is not None:
-            record = self.identities.resolve_person(person_id, decision, basis, actor=actor)
+            outcome = self.identities.resolve_person(person_id, decision, basis, actor=actor)
             self._identity_changed()
-            return record
+            return outcome
         ran = False
         record: Person | GonePerson | None = None
 
@@ -957,7 +982,7 @@ class Archive:
 
         self._mutate_identity("people", apply)
         assert ran, "the people table mutation never ran"
-        return record
+        return _person_outcome(record, person_id)
 
     def _proposed(
         self, directory: str, record_type: Callable[[dict[str, Any]], ProposedRecord]

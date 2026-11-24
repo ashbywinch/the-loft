@@ -14,6 +14,15 @@ from typing import Any
 
 
 @dataclass(frozen=True)
+class TranscribedLine:
+    """One line of a transcription: its text and the box the model measured for
+    it, in the response's NORMALIZED 0-1000 units."""
+
+    text: str
+    box: list[float]
+
+
+@dataclass(frozen=True)
 class Transcription:
     """What one vision call read: the transcription text (the .txt content,
     the lines joined with newlines) and the per-line boxes keyed by the line
@@ -31,6 +40,17 @@ class Transcription:
 
     text: str
     boxes: dict[int, list[float]] | None = None
+
+    def boxed_lines(self) -> list[TranscribedLine]:
+        """This reading's lines as text/box pairs, in reading order. The pairing
+        is this class's own invariant: ``from_lines`` builds ``text`` by joining
+        one entry per line and keys each box by that entry's position, so every
+        key is a valid index into ``text``'s split — a caller reads the pairs
+        instead of splitting the text itself, and computes no index that could
+        point past the text it indexes. A line the model measured no usable box
+        for is absent: its geometry is only the lines it measured."""
+        parts = self.text.split("\n")
+        return [TranscribedLine(parts[index], box) for index, box in sorted((self.boxes or {}).items())]
 
     @classmethod
     def from_payload(cls, data: Any, fallback: str) -> Transcription:

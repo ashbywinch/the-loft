@@ -176,7 +176,13 @@ def parse_transcription_response(text: str) -> Transcription:
     indexes stay aligned. No boxes when the model returned no usable
     geometry (the pipeline falls back to the detector's association — the
     geometry must come from the model that can READ the cursive, not the
-    rec engine that merges/misses its lines)."""
+    rec engine that merges/misses its lines).
+
+    Every answer yields a Transcription: the parse has no failing arm. A
+    call that died is the caller's ``VlmError`` to raise, and an answer that
+    does not fit the requested structure is a Transcription without boxes,
+    not an exception — so a caller never has to guess which of the two it
+    is holding."""
     try:
         data = extract_json(text)
     except VlmError:

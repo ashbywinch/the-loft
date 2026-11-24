@@ -391,6 +391,11 @@ good.
   ("email"), or out-of-domain jargon ("elicitation" — the UI's word is
   memory). When the UI has a word for a concept, the code uses the same
   word.
+- **The object model lists the concepts a reader cannot infer, not every
+  name.** A term earns an entry when its meaning would otherwise have to be
+  guessed, or when two things could share the word and the model picks one.
+  A name a reader can take at face value needs no entry, and the model's
+  silence about a name is not a judgement on it.
 
 - **A class names the object, never its serialisation — no `File` suffix.**
   Any object can be written to a file; "File" is the transport, not the

@@ -94,12 +94,13 @@ def test_a_run_of_rows_on_one_line_is_one_segment() -> None:
 
 def test_rows_within_the_merge_distance_belong_to_the_same_piece() -> None:
     """`ROW_MERGE` is the gap that still reads as one piece of ink: a 2-row
-    break is one piece, a 4-row break is two (a stroke's tip, not a cut)."""
+    break is one piece, and a 3-row break — the first gap past the merge
+    distance — is two (a stroke's tip, not a cut)."""
     fit = RowFit([Line(a=0.0, b=100.0)])
     merged = _mark(_strokes(80, 81) + _strokes(83, 84))
-    apart = _mark(_strokes(80, 81) + _strokes(85, 86))
+    apart = _mark(_strokes(80, 81) + _strokes(84, 85))
     assert fit.segments(merged) == [Segment(line=0, y0=80, y1=84)]
-    assert fit.segments(apart) == [Segment(line=0, y0=80, y1=81), Segment(line=0, y0=85, y1=86)]
+    assert fit.segments(apart) == [Segment(line=0, y0=80, y1=81), Segment(line=0, y0=84, y1=85)]
 
 
 def test_the_fit_cuts_where_the_ink_moves_to_another_line() -> None:

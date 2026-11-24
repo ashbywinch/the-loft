@@ -79,6 +79,17 @@ def test_a_create_over_an_existing_row_is_stale_not_a_second_insert(projection: 
     assert read is not None and read.name == "Aria Barlow"
 
 
+def test_a_base_guarded_write_with_no_row_inserts_at_the_bases_next_version(projection: PersonProjection) -> None:
+    """The guard is one-directional: `base=None` over a present row is refused,
+    but a `base` with no row to check finds no conflict and the upsert inserts.
+    `People.save` is what refuses that write honestly (`NotFound`, before the
+    projection is asked), so only a caller that skipped the collection sees
+    this — the row lands at `base + 1`, the version the event claimed."""
+    projection.write(_person(), _position(version=2), base=1)
+    read = projection.get("p-aria")
+    assert read is not None and (read.name, read.version) == ("Aria Barlow", 2)
+
+
 def test_the_collection_refuses_a_create_that_finds_the_person(store: LiveStore) -> None:
     with store.change(actor="test") as change:
         change.people.save(_person())

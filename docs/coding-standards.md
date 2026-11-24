@@ -408,7 +408,7 @@ good.
   (one identity collection's three verbs), `Determination` (the review's
   decision applied to one record). These are not entities and are not found
   in the PRD: they are the machinery over a domain noun, and each is pinned
-  by the suite named after it.
+  by the suite for the module that holds it.
 
 - **A class names the object, never its serialisation — no `File` suffix.**
   Any object can be written to a file; "File" is the transport, not the

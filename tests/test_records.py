@@ -48,6 +48,14 @@ def test_a_confirmed_record_writes_no_status_on_the_wire() -> None:
     assert rejected.to_dict()["status"] == "rejected"
 
 
+def test_a_record_status_outside_the_closed_set_is_refused() -> None:
+    """The status vocabulary is closed at the record's own seam, which is why
+    the ladder (`Determination.apply`) never meets an unknown status: a record
+    carrying one cannot be parsed, so it is never stored or read back."""
+    with pytest.raises(ValueError, match="bad record status"):
+        Person.from_dict({"id": "p-aria", "name": "Aria Barlow", "status": "attested"})
+
+
 def test_person_rejects_escaping_record_id() -> None:
     """The record id is the wire format's one filename source (avatar-<id>.svg,
     proposed/<id>.json) — a crafted id must fail parse, never reach a store

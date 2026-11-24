@@ -160,6 +160,29 @@ class TestParseTranscriptionResponse:
         assert reading.text == "first\nthird"
         assert reading.boxes == {0: [0.0, 0.0, 10.0, 10.0], 1: [20.0, 20.0, 30.0, 30.0]}
 
+    def test_boxed_lines_pair_each_box_with_its_own_text(self) -> None:
+        """The text/box pairing is the transcription's own: a line the model
+        measured no usable box for is absent, and every returned pair is a real
+        line — the caller never splits the text and never computes an index that
+        could point past it."""
+        from pipeline.model.transcription import TranscribedLine
+        from pipeline.model.vlm import parse_transcription_response
+
+        text = json.dumps(
+            {
+                "lines": [
+                    {"text": "first", "box": [0, 0, 10, 10]},
+                    {"text": "unmeasured"},
+                    {"text": "third", "box": [20, 20, 30, 30]},
+                ]
+            }
+        )
+        reading = parse_transcription_response(text)
+        assert reading.boxed_lines() == [
+            TranscribedLine(text="first", box=[0.0, 0.0, 10.0, 10.0]),
+            TranscribedLine(text="third", box=[20.0, 20.0, 30.0, 30.0]),
+        ]
+
     def test_missing_or_bad_boxes_dropped_geometry(self) -> None:
         from pipeline.model.vlm import parse_transcription_response
 
@@ -173,6 +196,17 @@ class TestParseTranscriptionResponse:
 
         reading = parse_transcription_response("I could not read the page")
         assert reading.text == "I could not read the page"
+        assert reading.boxes is None
+
+    def test_an_answer_that_does_not_fit_the_structure_has_no_failing_arm(self) -> None:
+        """The parse returns a Transcription for every answer (its docstring):
+        JSON in the wrong shape is a reading without boxes, never a raise — so
+        a caller cannot be handed a failure it mistakes for a read."""
+        from pipeline.model.vlm import parse_transcription_response
+
+        wrong_shape = json.dumps({"lines": ["not an entry"]})
+        reading = parse_transcription_response(wrong_shape)
+        assert reading.text == wrong_shape  # the plain-text fallback
         assert reading.boxes is None
 
     def test_collapsed_bottom_boxes_dropped(self) -> None:

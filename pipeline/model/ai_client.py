@@ -53,7 +53,18 @@ class Attempt:
 
 
 # What one send came back as: the endpoint's answer, parsed, or its refusal.
-_SendResult = Attempt | urllib.error.HTTPError
+@dataclass(frozen=True)
+class _UnreadableBody:
+    """A 200 whose body is not JSON: the gateway failing, not an answer.
+
+    Kept as a send result rather than raised, because what to do with it is a
+    decision, and ``_next_step`` is the one place decisions live."""
+
+    status: int
+    body: str
+
+
+_SendResult = Attempt | urllib.error.HTTPError | _UnreadableBody
 
 
 @dataclass(frozen=True)
@@ -307,14 +318,20 @@ class AIClient:
         )
         try:
             with self._urlopen(request, timeout=self.timeout) as response:
-                attempt = _parse_attempt(
-                    json.loads(response.read().decode("utf-8")),
-                    response.headers,
-                    payload.reasoning is not None and payload.reasoning.enabled,
-                )
+                body = response.read().decode("utf-8", "replace")
+                status = response.status
+                headers = response.headers
         except urllib.error.HTTPError as refusal:
             # the endpoint refused the send; ``_next_step`` decides what that means
             return refusal
+        try:
+            attempt = _parse_attempt(
+                json.loads(body), headers, payload.reasoning is not None and payload.reasoning.enabled
+            )
+        except json.JSONDecodeError:
+            # read and parsed outside the socket's lifetime: a body that is not
+            # JSON is a result to decide on, not an exception to leak
+            return _UnreadableBody(status=status, body=body)
         self._take_reasoning(attempt)
         return attempt
 
@@ -325,6 +342,11 @@ class AIClient:
 
         The cases, one branch each:
 
+        * a body that is not JSON — send again on the backoff while the budget
+          lasts, else fail with the status and the body, because a 200 with no
+          JSON is the gateway failing rather than an answer (measured
+          2026-11-24: a whitespace body, and every review eval errored at the
+          same byte offset because the decode error escaped the loop);
         * refusal, a retryable status (429/5xx) with retry budget left — send
           again on the backoff, because the endpoint is busy, not broken;
         * refusal, a retryable status, budget exhausted — fail with the body,
@@ -347,6 +369,19 @@ class AIClient:
           lasts, else fail, because a 200 with no content is a transient
           provider failure.
         """
+        if isinstance(send_result, _UnreadableBody):
+            if attempts_made >= self.max_retries:
+                return _Failure(
+                    f"API answered HTTP {send_result.status} with no JSON "
+                    f"({len(send_result.body)} bytes): {send_result.body[:200]!r}"
+                )
+            logger.warning(
+                "chat: HTTP %s with a non-JSON body (%d bytes) — retrying",
+                send_result.status,
+                len(send_result.body),
+            )
+            return _NextSend(payload, uses_backoff=True, fresh_sample_taken=fresh_sample_taken)
+
         if isinstance(send_result, urllib.error.HTTPError):
             error = send_result
             if error.code in _RETRYABLE_STATUSES:

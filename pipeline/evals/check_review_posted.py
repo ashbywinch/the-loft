@@ -33,7 +33,7 @@ and returns False — and ``github_action_runner.py`` discards that return
 value, so the action exits 0 whether or not the review happened. A green
 bot step is therefore meaningless, and the only truthful signal is this
 check. To make the failure SELF-EXPLAINING rather than a guess, the check
-fetches the run's own log (the checks API) and extracts the bot's error
+fetches the run's own log (the actions API) and extracts the bot's error
 lines: the "Failed to process the command." traceback, model/API errors,
 and the diff-token-cap marker — the check's failure message names the
 reason instead of "may have failed silently".

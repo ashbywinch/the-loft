@@ -244,11 +244,16 @@ class _BotLog:
         return f"the bot's last output before going silent: {last.split(chr(9))[-1][:200]}"
 
     def _quote(self, marker_line: str) -> str:
-        """The error and the lines after it, joined for one sentence."""
-        start = next(
-            (index for index, line in enumerate(self.structured) if marker_line in line),
-            0,
-        )
+        """The error and the lines after it, joined for one sentence.
+
+        The marker can arrive as plain text, outside the structured lines —
+        ``failure`` is read from the whole log — and then the marker line itself
+        is the quote. Falling back to the start of ``structured`` would print
+        whichever lines happened to come first, which is somebody else's words.
+        """
+        start = next((index for index, line in enumerate(self.structured) if marker_line in line), None)
+        if start is None:
+            return marker_line.split("\t")[-1][:200]
         tail = [line for line in self.structured[start : start + self.TAIL_LINES] if line.strip()]
         return " | ".join(line.split("\t")[-1][:200] for line in tail[:4])
 

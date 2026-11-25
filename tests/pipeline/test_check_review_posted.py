@@ -141,6 +141,15 @@ def test_the_same_skip_log_over_the_token_cap_fails() -> None:
     assert not gate._BotLog(log).skipped
 
 
+def test_a_failure_logged_as_plain_text_quotes_its_own_line() -> None:
+    """The marker can arrive outside the structured lines. The quote is then the
+    marker, never whichever structured lines happened to come first."""
+    log = 'a plain traceback line: Traceback (most recent call last)\n{"text":"starting"}\n'
+    reason = gate._BotLog(log).reason
+    assert "Traceback" in reason
+    assert "starting" not in reason
+
+
 def test_a_non_json_api_body_is_named_in_the_failure() -> None:
     """A proxy's error page or a truncated read is not an empty review: the
     failure names the body as the thing that could not be read."""

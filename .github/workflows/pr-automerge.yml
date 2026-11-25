@@ -37,7 +37,7 @@ jobs:
     permissions:
       contents: read
     # v0.2.7, pinned to its commit: this job receives the App's private key.
-    uses: ashbywinch/omp-config/.github/workflows/pr-automerge.yml@6f84dd155322efcc12502813b1b3b9b336f28edd
+    uses: ashbywinch/omp-config/.github/workflows/pr-automerge.yml@8149c9889344d42d6c303643be2bc9d8d88b19d1
     with:
       app_id: ${{ vars.OMP_APP_ID }}
     secrets:

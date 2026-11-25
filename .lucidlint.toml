@@ -149,8 +149,9 @@ ignore = ["unused"]
 [lucidlint."pipeline/api/sync.py"]
 ignore = ["long-param-list"]
 
-# long-param-list: the crop-grid run's inputs are the page's state — no
-# class for one call site (two sites, one why).
+# long-param-list: the crop-grid run's inputs ARE the page's state — the CLI
+# and its one test call it with the same six values, and a type would rename
+# them without removing one.
 [lucidlint."pipeline/evals/eval_crop_grid.py"]
 ignore = ["long-param-list"]
 

@@ -5,7 +5,7 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
 
 # One review at a time per PR. A running review is never cancelled: a
-# cancelled run leaves its head with no review check run, so the gate stays red
+# cancelled run leaves its head with no review comment, so the gate stays red
 # on code nobody read. GitHub still replaces a *pending* run when a newer push
 # arrives; the surviving run reviews the newer head, which is what the gate
 # reads.
@@ -78,7 +78,6 @@ jobs:
       pull-requests: read
       issues: read
       actions: read # read the bot's completed run log for the failure reason
-      checks: read # read the bot's "PR Agent - Review" check run on the head
     steps:
       # SECURITY: checkout the DEFAULT branch, not the PR head — the script
       # runs with GITHUB_TOKEN, and a PR could replace

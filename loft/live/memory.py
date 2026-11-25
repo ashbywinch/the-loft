@@ -933,10 +933,16 @@ class _MemoryChange:
         self._collections: dict[str, dict[str, object]] = {}
 
     def __enter__(self) -> Self:
+        # The writer lock is reentrant, so a nested change in the SAME thread
+        # re-acquires it and then meets the flag; a change from another thread
+        # blocks here until the holder exits. Checking the flag before the lock
+        # read concurrent writers as nesting and failed the queue that
+        # test_concurrent_messages_lose_nothing[memory] requires (2026-11-25).
+        self.lock.acquire()
         if getattr(self.store, "_active_change", False):
+            self.lock.release()
             raise Conflict("a change cannot be nested")
         self.store._active_change = True
-        self.lock.acquire()
         self._people = dict(self.store._people)
         self._items = dict(self.store._items)
         self._item_refs = dict(self.store._item_refs)

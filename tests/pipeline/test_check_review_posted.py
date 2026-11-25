@@ -112,20 +112,20 @@ def test_a_comment_is_read_off_the_wire_with_its_author_type() -> None:
 def test_a_clean_no_analyzable_files_log_passes() -> None:
     """The bot examined a PR it cannot analyse (a lone CSV diff) and said so;
     it posts nothing by design. The log is the verdict."""
-    assert gate._review_skipped(_NO_ANALYZABLE_FILES)
+    assert gate._BotLog(_NO_ANALYZABLE_FILES).skipped
 
 
 def test_the_same_skip_log_with_a_traceback_fails() -> None:
     """A run that died cannot hide behind a skip line it logged before dying."""
     log = _NO_ANALYZABLE_FILES + '{"text":"Failed to process the command."}\n'
-    assert not gate._review_skipped(log)
+    assert not gate._BotLog(log).skipped
 
 
 def test_the_same_skip_log_over_the_token_cap_fails() -> None:
     """The size marker means the review was pruned past its budget, not that
     there was nothing to read."""
     log = _NO_ANALYZABLE_FILES + '{"text":"Tokens: 91000, total tokens over limit: 80000"}\n'
-    assert not gate._review_skipped(log)
+    assert not gate._BotLog(log).skipped
 
 
 def test_a_non_json_api_body_is_named_in_the_failure() -> None:

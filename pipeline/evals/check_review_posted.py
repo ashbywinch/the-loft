@@ -45,6 +45,7 @@ import re
 import sys
 import urllib.request
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from typing import Any
 from urllib.error import HTTPError, URLError
 
@@ -161,81 +162,86 @@ class _ReviewGate:
         return resp.read().decode("utf-8", errors="replace")
 
 
-def _bot_failure_reason(log: str | None) -> str:
-    """The bot's own words about its failure, from the run log — the reason
-    the review died, instead of a guess. Falls back to the last thing the
-    bot said."""
-    if log is None:
-        # the fail-loud step runs inside the bot's OWN job — GitHub does not
-        # serve a job's log until the job completes, so the reason extractor
-        # can never see it here. Run this check from a SEPARATE job (needs:
-        # the bot job) for the real reason; this fallback is the honest
-        # admission that the review did not post.
-        return "the bot's job log is not served while the job is still running (run this check from a separate job)"
-    # The raw job blob is TIMESTAMPZ + message lines with no step prefixes
-    # (the runner's processed view adds them); the bot's own records are the
-    # structured JSON lines with a "text" field — those carry the markers.
-    bot_lines = [ln for ln in log.splitlines() if '"text"' in ln]
-    if not bot_lines:
-        return "the bot's step produced no log output"
+class _BotLog:
+    """The bot's own run log, read one way for every question asked of it.
 
-    return _failure_reason(bot_lines)
+    Two facts come from it: whether the review died, and whether it
+    deliberately reviewed nothing. **Both scan the whole log**, so a marker
+    outside the JSON wrapper still counts — a run that died cannot be read as a
+    clean skip because its traceback was logged as plain text. Only the failure
+    *message* narrows to the bot's structured lines (`"text"`), because those
+    carry the words worth quoting; narrowing the scan itself would let a silent
+    failure read as a verdict.
+
+    The reason is extracted rather than guessed: the diff-token cap that
+    precedes a pruned diff, the swallowed traceback seam, and failing both, the
+    last thing the bot said.
+    """
+
+    FAILURE_MARKERS = ("Failed to process the command.", "Traceback (most recent call last)")
+    SKIP_MARKERS = ("PR has no analyzable files", "skipping review", "skipping describe")
+    TAIL_LINES = 12  # lines after a failure marker worth reporting
+
+    def __init__(self, text: str | None) -> None:
+        self.text = text or ""
+        self._structured = [line for line in self.text.splitlines() if '"text"' in line]
+
+    @property
+    def failed(self) -> bool:
+        """The review died: a failure marker or the token-cap line, anywhere."""
+        return any(mark in self.text for mark in self.FAILURE_MARKERS) or bool(_SIZE_RE.search(self.text))
+
+    @property
+    def skipped(self) -> bool:
+        """The bot examined the PR and deliberately reviewed nothing.
+
+        pr-agent skips a PR it has no analyzable files for — a lone CSV diff,
+        say — logs why, and posts no comment. That is a verdict, not a failure,
+        and it counts only when the same log carries no failure.
+        """
+        if not self.text or self.failed:
+            return False
+        return any(marker in self.text for marker in self.SKIP_MARKERS)
+
+    @property
+    def reason(self) -> str:
+        """Why the review did not post, in the bot's own words."""
+        if not self.text:
+            # the fail-loud step runs inside the bot's OWN job — GitHub does not
+            # serve a job's log until the job completes, so the reason extractor
+            # can never see it here. Run this check from a SEPARATE job for the
+            # real reason; this is the honest admission that no review posted.
+            return "the bot's job log is not served while the job is still running (run this check from a separate job)"
+        if not self._structured:
+            return "the bot's step produced no log output"
+        return self._from_structured()
+
+    def _from_structured(self) -> str:
+        """The failure the bot's own records name, or the last thing it said."""
+        for line in self._structured:
+            match = _SIZE_RE.search(line)
+            if match:
+                return (
+                    f"the PR's cumulative diff is {match.group(1)} tokens — over the bot's "
+                    f"{match.group(2)}-token review cap; the review died after pruning the diff"
+                )
+        for index, line in enumerate(self._structured):
+            if any(mark in line for mark in self.FAILURE_MARKERS):
+                tail = [ln for ln in self._structured[index : index + self.TAIL_LINES] if ln.strip()]
+                snippet = " | ".join(ln.split("\t")[-1][:200] for ln in tail[:4])
+                return f"the bot logged an error before dying: {snippet}"
+        last = next((ln for ln in reversed(self._structured) if ln.strip()), "")
+        return f"the bot's last output before going silent: {last.split(chr(9))[-1][:200]}"
 
 
-def _failure_reason(
-    bot_lines: list[str],
-    markers: tuple[str, ...] = ("Failed to process the command.", "Traceback (most recent call last)"),
-    tail_lines: int = 12,  # lines after a failure marker worth reporting
-) -> str:
-    """Why the bot died, from its own log lines: the diff-token cap (the
-    size signal that precedes a died model call), the swallowed traceback
-    seam, or the last thing it said.
-
-    The markers and the tail are parameters because they describe this log's
-    shape, not the module's state."""
-    for ln in bot_lines:
-        m = _SIZE_RE.search(ln)
-        if m:
-            return (
-                f"the PR's cumulative diff is {m.group(1)} tokens — over the bot's "
-                f"{m.group(2)}-token review cap; the review died after pruning the diff"
-            )
-    for i, ln in enumerate(bot_lines):
-        if any(mark in ln for mark in markers):
-            tail = [line for line in bot_lines[i : i + tail_lines] if line.strip()]
-            snippet = " | ".join(line.split("\t")[-1][:200] for line in tail[:4])
-            return f"the bot logged an error before dying: {snippet}"
-    last = next((line for line in reversed(bot_lines) if line.strip()), "")
-    return f"the bot's last output before going silent: {last.split(chr(9))[-1][:200]}"
-
-
-def _review_skipped(
-    log: str | None,
-    failure_markers: tuple[str, ...] = ("Failed to process the command.", "Traceback (most recent call last)"),
-    skip_markers: tuple[str, ...] = ("PR has no analyzable files", "skipping review", "skipping describe"),
-) -> bool:
-    """True when the bot examined the PR and deliberately reviewed nothing.
-
-    pr-agent skips a PR it has no analyzable files for — a lone CSV diff, say
-    — logs why, and posts no comment. That is a verdict, not a failure. The
-    run log is its only record, so the marker counts ONLY when the same log
-    carries no traceback and no token-cap line: a run that died cannot hide
-    behind a skip line it logged before dying."""
-    if not log:
-        return False
-    if any(mark in log for mark in failure_markers) or _SIZE_RE.search(log):
-        return False
-    return any(marker in log for marker in skip_markers)
-
-
+@dataclass(frozen=True)
 class _Comment:
     """One issue comment, in the shape the API returns it."""
 
-    def __init__(self, body: str, created_at: str, updated_at: str = "", user_type: str = "Bot"):
-        self.body = body
-        self.created_at = created_at
-        self.updated_at = updated_at
-        self.user_type = user_type
+    body: str
+    created_at: str
+    updated_at: str = ""
+    user_type: str = "Bot"
 
     @classmethod
     def from_json(cls, node: "Mapping[str, Any]") -> "_Comment":
@@ -267,33 +273,71 @@ def _opening(body: str) -> str:
     return body.lstrip().removeprefix("\ufeff").lstrip()
 
 
-def _review_covers(comments: list[_Comment], sha: str, reviewed_after: str) -> bool:
-    """Does any comment cover the head commit? A human /skip opt-out (applies
-    to the whole PR), a posted guide (regular or incremental, referencing the
-    sha, created or edited after the head was received), or the bot's own
-    incremental-skip verdict (created after the head was received — the diff
-    was examined and found empty, so the skip is the review, not a
-    failure)."""
-    if any(c.body.strip() == _BotComment.SKIP for c in comments):
-        return True
-    # Bodies arrive as the bot wrote them: a leading newline or byte-order mark is
-    # not part of either format, and a startswith that tripped on one would fail
-    # the gate on a review that did post. The guide is EDITED in place too, so
-    # created_at never advances — an edit after the head arrived is coverage.
-    return any(
-        (
-            _opening(c.body).startswith(_BotComment.GUIDE)
-            and (
-                f"commit/{sha}" in c.body  # the incremental "Starting from commit .../<SHA>" form
-                or c.created_at >= reviewed_after
-                or c.updated_at >= reviewed_after
-            )
+@dataclass(frozen=True)
+class _Coverage:
+    """One comment's claim to cover the head commit, judged against this run.
+
+    A review reaches the PR in one of three forms — a human's skip, a posted
+    guide, or the bot's empty-increment skip — and each is one property here so
+    ``covers`` reads as the three ways a head can be covered.
+    """
+
+    comment: _Comment
+    run_started: str
+
+    @property
+    def posted_after(self) -> bool:
+        """Whether the comment is this run's, by time.
+
+        GitHub writes both stamps in one fixed format (``2026-11-24T19:22:18Z``,
+        UTC), so text order is time order. An edit counts as well as a new
+        comment because the guide is EDITED in place — its ``created_at`` never
+        advances, so an edit after the head arrived is the only sign of a new
+        review.
+        """
+        return self.comment.created_at >= self.run_started or self.comment.updated_at >= self.run_started
+
+    @property
+    def a_human_skip(self) -> bool:
+        """A human's ``/skip`` opts the whole PR out of review, by deliberate choice."""
+        return self.comment.body.strip() == _BotComment.SKIP
+
+    def a_guide_for(self, sha: str) -> bool:
+        """A posted review, either form, for this head: it names the head sha or it
+        arrived during this run.
+
+        The incremental body names the range's FIRST new commit, not the head — so
+        coverage for an incremental review falls to the posted-during-this-run rule,
+        and the explicit form is belt-and-braces for reviews that embed the head.
+        """
+        if not _opening(self.comment.body).startswith(_BotComment.GUIDE):
+            return False
+        return f"commit/{sha}" in self.comment.body or self.posted_after
+
+    @property
+    def a_bot_skip(self) -> bool:
+        """The bot's own "no new files since the last review" verdict.
+
+        An incremental review whose increment is empty posts this instead of a
+        guide: the diff since the last review was examined and found empty, so the
+        skip IS the review, not a failure. It covers only when the bot posted it
+        during this run.
+        """
+        return (
+            _opening(self.comment.body).startswith(_BotComment.SKIPPED)
+            and self.comment.user_type == "Bot"
+            and self.comment.created_at >= self.run_started
         )
-        or (
-            _opening(c.body).startswith(_BotComment.SKIPPED) and c.user_type == "Bot" and c.created_at >= reviewed_after
-        )
-        for c in comments
-    )
+
+    def covers(self, sha: str) -> bool:
+        """One of the three forms covers this head."""
+        return self.a_human_skip or self.a_guide_for(sha) or self.a_bot_skip
+
+
+def _review_covers(comments: list[_Comment], sha: str, run_started: str) -> bool:
+    """Does any comment cover the head commit? Three forms count, one property each:
+    a human skip, a guide for this head, or the bot's empty-increment skip."""
+    return any(_Coverage(comment, run_started).covers(sha) for comment in comments)
 
 
 def main() -> int:
@@ -351,13 +395,13 @@ def main() -> int:
                 f"read ({type(e).__name__}: {e}), so the reason is unknown."
             )
             return 1
-        if _review_skipped(log):
+        if _BotLog(log).skipped:
             print(
                 f"::notice::no review posted for {sha} — the reviewer found nothing it can "
                 "analyse in this PR. A clean skip, not a failure."
             )
             return 0
-        reason = _bot_failure_reason(log)
+        reason = _BotLog(log).reason
         print(f"::error::AI review did not post for commit {sha} — {reason}.")
         return 1
     return 0

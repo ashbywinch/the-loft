@@ -267,6 +267,11 @@ class _BotComment:
     SKIP = "/skip"
 
 
+def _opening(body: str) -> str:
+    """The body as a format match sees it: no leading whitespace, no byte-order mark."""
+    return body.lstrip().removeprefix("\ufeff").lstrip()
+
+
 def _review_covers(comments: list[_Comment], sha: str, reviewed_after: str) -> bool:
     """Does any comment cover the head commit? A human /skip opt-out (applies
     to the whole PR), a posted guide (regular or incremental, referencing the
@@ -276,19 +281,22 @@ def _review_covers(comments: list[_Comment], sha: str, reviewed_after: str) -> b
     failure)."""
     if any(c.body.strip() == _BotComment.SKIP for c in comments):
         return True
-    # The guide is EDITED in place, so created_at never advances and pr-agent's
-    # persistent-state read can fail without a SHA footer — an edit after the
-    # head arrived is coverage.
+    # Bodies arrive as the bot wrote them: a leading newline or byte-order mark is
+    # not part of either format, and a startswith that tripped on one would fail
+    # the gate on a review that did post. The guide is EDITED in place too, so
+    # created_at never advances — an edit after the head arrived is coverage.
     return any(
         (
-            c.body.startswith(_BotComment.GUIDE)
+            _opening(c.body).startswith(_BotComment.GUIDE)
             and (
                 f"commit/{sha}" in c.body  # the incremental "Starting from commit .../<SHA>" form
                 or c.created_at >= reviewed_after
                 or c.updated_at >= reviewed_after
             )
         )
-        or (c.body.startswith(_BotComment.SKIPPED) and c.user_type == "Bot" and c.created_at >= reviewed_after)
+        or (
+            _opening(c.body).startswith(_BotComment.SKIPPED) and c.user_type == "Bot" and c.created_at >= reviewed_after
+        )
         for c in comments
     )
 

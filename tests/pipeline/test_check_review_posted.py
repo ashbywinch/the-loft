@@ -56,6 +56,19 @@ def test_a_guide_edited_after_the_run_started_covers() -> None:
     assert _covers([_comment(_GUIDE, created_at=_BEFORE_THE_RUN, updated_at=_AFTER_THE_RUN)])
 
 
+def test_a_guide_with_leading_whitespace_still_covers() -> None:
+    """A body arrives as the bot wrote it. A leading newline or byte-order mark
+    is not part of the format, and tripping on one would fail the gate on a
+    review that did post — the one direction this check must not fail in."""
+    body = f"\n\ufeff## PR Reviewer Guide 🔍\nStarting from commit /commit/{_SHA}"
+    assert _covers([_comment(body)])
+
+
+def test_the_bot_skip_with_leading_whitespace_still_covers() -> None:
+    body = "\n  Incremental Review Skipped — the diff since the last review is empty"
+    assert _covers([_comment(body)])
+
+
 def test_a_guide_older_than_the_run_start_does_not_cover() -> None:
     """A guide neither naming the head nor touched since this run began is an
     earlier round's text — it says nothing about this push."""

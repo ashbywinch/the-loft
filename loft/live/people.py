@@ -30,10 +30,11 @@ class People:
     def __init__(self, connection: sqlite3.Connection, change: Change | None = None) -> None:
         self.connection = connection
         self.change = change
+        self.rows = person_row.PersonProjection(connection)
         self.aliases = Aliases(connection)
 
     def get(self, person_id: str) -> Person | None:
-        return person_row.read_row(self.connection, person_id)
+        return self.rows.get(person_id)
 
     def all(self) -> tuple[Person, ...]:
         """Every person in the archive's own order — the create sequence, so a
@@ -80,8 +81,7 @@ class People:
             payload=payload,
         )
         saved = replace(person, version=version)
-        person_row.write_row(
-            self.connection,
+        self.rows.write(
             saved,
             person_row.RowPosition(
                 version=version,
@@ -170,7 +170,7 @@ class People:
         ``delete``. The log keeps the record it deletes; its edges go too."""
         current = self.require(person_id)
         self._write_event(current, "deleted")
-        person_row.delete_row(self.connection, person_id)
+        self.rows.delete(person_id)
         self._delete_edges(person_id)
 
     def merge(self, loser_id: str, survivor_id: str, by: str) -> Person:
@@ -224,8 +224,7 @@ class People:
             entity_version=version,
             payload=json.dumps(payload_record, sort_keys=True, separators=(",", ":"), ensure_ascii=False),
         )
-        person_row.write_row(
-            self.connection,
+        self.rows.write(
             record,
             person_row.RowPosition(
                 version=version,

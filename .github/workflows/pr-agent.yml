@@ -5,7 +5,7 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
 
 # One review at a time per PR. A running review is never cancelled: a
-# cancelled run leaves its head with no review check run, so the gate stays red
+# cancelled run leaves its head with no review comment, so the gate stays red
 # on code nobody read. GitHub still replaces a *pending* run when a newer push
 # arrives; the surviving run reviews the newer head, which is what the gate
 # reads.
@@ -49,12 +49,15 @@ jobs:
           OPENAI_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_BASE_URL: https://gateway.ai.cloudflare.com/v1/e21a5be58ac1e8f7d5619539feb2dc3d/default/compat
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # SECURITY + correctness: the config comes from this pinned branch,
-          # never the PR head (a same-repo branch could ship its own
-          # api_base/config and exfiltrate the key) — mirrors omp-config.
-          # That branch is fetched via the API; 404 falls back to the default
-          # branch — never the working tree.
-          PR_AGENT_CONFIG_BRANCH: pr-agent-config
+          # SECURITY + correctness: the config comes from the base branch by
+          # name, never the PR head (a same-repo branch could ship its own
+          # api_base/config and exfiltrate the key). It used to come from a
+          # separate `pr-agent-config` branch, which silently diverged from the
+          # file in the repo: that branch capped findings at 12 and still had
+          # the old instructions, so every review reported twelve and the next
+          # push bought twelve more — eleven rounds on one PR. One file, one
+          # branch: the config a reader can see is the config that reviews.
+          PR_AGENT_CONFIG_BRANCH: main
 
   verify:
     # A SEPARATE job that runs AFTER the bot job completes: GitHub does not
@@ -75,7 +78,6 @@ jobs:
       pull-requests: read
       issues: read
       actions: read # read the bot's completed run log for the failure reason
-      checks: read # read the bot's "PR Agent - Review" check run on the head
     steps:
       # SECURITY: checkout the DEFAULT branch, not the PR head — the script
       # runs with GITHUB_TOKEN, and a PR could replace

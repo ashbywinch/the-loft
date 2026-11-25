@@ -365,6 +365,8 @@ class _BytesResponse:
 
     def __init__(self, body: bytes) -> None:
         self._body = body
+        self.status = 200
+        self.headers: dict[str, str] = {}
 
     def __enter__(self) -> _BytesResponse:
         return self
@@ -374,6 +376,23 @@ class _BytesResponse:
 
     def read(self) -> bytes:
         return self._body
+
+
+class TestUnreadableBody:
+    """A 200 with no JSON is the endpoint failing, not a transcription."""
+
+    def test_a_blank_body_is_a_vlm_error_naming_the_status(self, tmp_path: Path) -> None:
+        def fake_urlopen(request, timeout=None):
+            return _BytesResponse(b"  \n ")
+
+        with pytest.raises(vlm.VlmError, match="no JSON"):
+            vlm.transcribe_image_vlm(
+                TestThinkingDisabled._png(tmp_path),
+                model="dynamic/image",
+                base_url="http://x/v1",
+                api_key="k",
+                urlopen=fake_urlopen,
+            )
 
 
 class TestThinkingDisabled:

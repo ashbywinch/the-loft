@@ -11,8 +11,11 @@ extra_headers = '{"cf-aig-request-timeout": "1800000", "cf-aig-max-attempts": "0
 
 [config]
 model = "openai/dynamic/fallback2"  # the handler strips the "openai/" prefix and sends "dynamic/fallback2" to api_base — the gateway's fallback2 DYNAMIC ROUTE (OpenCode primary → DeepSeek fallback). A raw provider model id (deepseek/deepseek-v4-flash, until 2026-10-17) bypasses the route: no failover, and the provider's "Insufficient Balance" killed every review (2026-10-17). The 2026-09-23 401 came from the missing [openai] custom_llm_provider, not the prefix.
-custom_model_max_tokens = 128000
-max_model_tokens = 128000
+# The route answers deepseek-v4-flash, whose output ceiling is far below 128k;
+# claiming 128k made pr-agent ask for a review longer than the model can emit
+# and the answer was truncated (measured: #134, run 44736435686).
+custom_model_max_tokens = 1000000
+max_model_tokens = 1000000
 ai_timeout = 1800
 fallback_models = []
 repo_context_from_default_branch = true  # the standards come from main: a PR must not supply the rule it is judged by
@@ -35,19 +38,23 @@ repo_context_files = [
 
 
 [pr_reviewer]
-# A full review on every push: that path is the only one that publishes the
-# "PR Agent - Review" check run (pr_reviewer.run reaches _publish_check_run only
-# on the persistent, non-incremental branch), and the check run is the gate's
-# coverage artifact. With publish_as_check_run the review is published AS the
-# check run — the PR comment is not updated, so read the review under Checks.
-# Incremental reviews publish no check run, and their anchor is the previous
-# review comment's created_at — a commit pushed while a review runs is then
-# never read (it lands before the next anchor, and the next run skips as "no
-# new files").
+# A push reviews the commits since the last review (`/review -i`, set below),
+# not the whole diff again. Coverage is proved by the gate's comment rule
+# (pipeline/evals/check_review_posted.py): a guide naming the head sha, a guide
+# posted or edited after this run started, the bot's own "Incremental Review
+# Skipped" (nothing changed since the last review), or a human /skip. The
+# check run is NOT the signal — the pinned action publishes it only on the
+# non-incremental path (pr_reviewer.py:420, inside `elif persistent_comment and
+# not is_incremental`), so demanding one forced a full review of the whole diff
+# on every push and re-derived findings that earlier rounds had settled.
 persistent_comment = true
 require_tests_review = true
 require_security_review = true
-num_max_findings = 50
+# Measured, not chosen: 12 completed eleven consecutive reviews on one PR;
+# 50 truncated the answer on a 10-file PR three times (FallbackEligibleError,
+# the whole review lost). The cap bounds the answer's length, so it is set
+# where a review finishes rather than where it would be exhaustive.
+num_max_findings = 20
 # Publish each finding as a verified inline review comment (the pinned action
 # implements get_persistent_comment_bodies/get_recent_inline_comment_bodies).
 inline_key_issues = true
@@ -62,6 +69,7 @@ extra_instructions = """
 - **Folder structure.** Report a missing or malformed required doc in docs/documentation-structure.md. Every doc must be reachable from AGENTS.md; skills are exempt because the harness discovers them.
 - **UX.** Report deviations from docs/ux-standards.md.
 - **Structure.** Report a missed class (a bare dict, tuple or list in a record position), a name that violates the object model, and a separation-of-concerns violation.
+- **Shape.** Each finding is one sentence: `path:line` — the defect — the rule it breaks. No restatement of the code, no praise, no closing summary. A review that runs past the model's output budget is truncated and delivers nothing, so the answer is written to fit.
 - **Suppressions.** Report a suppression whose why fails the evidence bar in docs/coding-standards.md, in every form that section names (`lucidlint: ignore`, `ignore-file`, `# type: ignore`, `#[allow(...)]`, `# noqa`). Only code that carries one is checked; asking for one where none exists is not a finding.
 """
 
@@ -80,23 +88,23 @@ handle_push_trigger = true
 # would silently never review its pushes (the fail-loud verify job caught it:
 # "Skipping synchronize: bot commit detected"). Review every push.
 push_trigger_ignore_bot_commits = false
-# A full review on every push, no -i: the check run is only published on the
-# non-incremental path (see [pr_reviewer]), so an incremental review would
-# leave the gate red. A PR whose cumulative diff outgrows the 128k token cap
-# dies at pruning and fails the gate with the size reason — the cap is the
-# limit to fix, not the incremental flag.
+# A push reviews the commits since the last review: `/review -i` is the
+# incremental form (pr_reviewer.parse_incremental), and the gate counts the
+# resulting comment as coverage. A PR whose cumulative diff outgrows the token
+# cap no longer dies on a full re-read of a diff it already reviewed — each
+# push reads only its own commits.
 # /improve has NO incremental support in any pr-agent version (verified
 # v0.41.1 and main: pr_code_suggestions has no incremental machinery, and
 # -i on it is a no-op) — it is a full-PR pass by upstream design.
-push_commands = ["/review"]
+push_commands = ["/review -i"]
 skip_commands = ["/skip"]
 
 
 [github]
-# Publish the review as a completed "PR Agent - Review" check run on the head
-# SHA — the gate's coverage signal (pipeline/evals/check_review_posted.py). The
-# check run exists only when the review text was in hand; without it the gate
-# can only read comments, and a cancelled run's guide reads exactly like a
-# completed review. The review text caps at 65,535 characters; the tail is
+# Publish a FULL (non-incremental) review as a completed "PR Agent - Review"
+# check run on the head SHA. The gate no longer reads it: coverage is the
+# review comment (see [pr_reviewer]), and an incremental push review publishes
+# none. Keep it for a deliberate full `/review` run, where the check run is the
+# visible artifact; the review text caps at 65,535 characters and the tail is
 # dropped on a review that large.
 publish_as_check_run = true

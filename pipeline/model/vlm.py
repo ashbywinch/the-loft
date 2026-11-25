@@ -433,7 +433,14 @@ def _vision_post(
                 ),
                 timeout=timeout,
             ) as response:
-                body = json.loads(response.read().decode("utf-8"))
+                raw = response.read().decode("utf-8", "replace")
+                try:
+                    body = json.loads(raw)
+                except json.JSONDecodeError as exc:
+                    raise VlmError(
+                        f"vision endpoint answered HTTP {response.status} with no JSON "
+                        f"({len(raw)} bytes): {raw[:200]!r}"
+                    ) from exc
                 try:
                     return ChatResponse.from_dict(body)
                 except (KeyError, IndexError, TypeError) as exc:

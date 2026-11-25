@@ -273,6 +273,18 @@ def _opening(body: str) -> str:
     return body.lstrip().removeprefix("\ufeff").lstrip()
 
 
+def _from_a_machine(user_type: str) -> bool:
+    """Whether the comment came from a machine rather than a human.
+
+    The bot's empty-increment skip counts only when the bot posted it: a human
+    can paste the same words, and a human's paste is not a review. GitHub
+    reports machine accounts as ``Bot`` (github-actions) or ``App`` (an App's
+    own comment) and people as ``User``, so the test is "not a person" rather
+    than a list of the machine spellings the API happens to use today.
+    """
+    return user_type != "User"
+
+
 @dataclass(frozen=True)
 class _Coverage:
     """One comment's claim to cover the head commit, judged against this run.
@@ -293,7 +305,8 @@ class _Coverage:
         UTC), so text order is time order. An edit counts as well as a new
         comment because the guide is EDITED in place — its ``created_at`` never
         advances, so an edit after the head arrived is the only sign of a new
-        review.
+        review. A stamp equal to the run start counts: two runs in the same
+        second on one PR are reviewing the same push.
         """
         return self.comment.created_at >= self.run_started or self.comment.updated_at >= self.run_started
 
@@ -325,7 +338,7 @@ class _Coverage:
         """
         return (
             _opening(self.comment.body).startswith(_BotComment.SKIPPED)
-            and self.comment.user_type == "Bot"
+            and _from_a_machine(self.comment.user_type)
             and self.comment.created_at >= self.run_started
         )
 

@@ -56,6 +56,19 @@ def test_a_guide_edited_after_the_run_started_covers() -> None:
     assert _covers([_comment(_GUIDE, created_at=_BEFORE_THE_RUN, updated_at=_AFTER_THE_RUN)])
 
 
+def test_an_app_typed_skip_still_covers() -> None:
+    """GitHub reports machine accounts as `Bot` or `App`; the skip counts for
+    either, because the test is "not a person", not a list of spellings."""
+    body = "Incremental Review Skipped — no new files since the last review"
+    assert _covers([_comment(body, user_type="App")])
+
+
+def test_a_persons_skip_text_does_not_cover() -> None:
+    """A human can paste the bot's words. A human's paste is not a review."""
+    body = "Incremental Review Skipped — no new files since the last review"
+    assert not _covers([_comment(body, user_type="User")])
+
+
 def test_a_guide_with_leading_whitespace_still_covers() -> None:
     """A body arrives as the bot wrote it. A leading newline or byte-order mark
     is not part of the format, and tripping on one would fail the gate on a

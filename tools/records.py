@@ -24,7 +24,7 @@ import re
 from collections.abc import Callable, Mapping, MutableMapping
 from dataclasses import dataclass, replace
 from datetime import UTC
-from typing import Any, ClassVar, Literal, TypeVar, cast
+from typing import Any, ClassVar, Literal, Protocol, TypeVar, cast
 
 from tools.asset import Asset
 from tools.date_mention import DateMention
@@ -74,27 +74,123 @@ def is_valid_record_id(record_id: str) -> bool:
     return bool(RECORD_ID_RE.fullmatch(record_id))
 
 
-def _dated(raw: Mapping[str, Any], key: str) -> DatedFact | None:
-    """The dated fact a record's field states (dob, dod, a relationship
-    date) — None when the field is absent."""
-    value = raw.get(key)
-    return None if not value else DatedFact.from_dict(value, key)
+class Identified(Protocol):
+    """A record a raw field's list carries: one that has the id its table keys
+    on. The bound is the type system's, so a record class without ``id`` is
+    refused where its list is parsed, not at the first duplicate check."""
+
+    @property
+    def id(self) -> str: ...
 
 
-def _required_value(raw: Mapping[str, Any], key: str, vocab: frozenset[str], label: str) -> str:
-    """A required field whose value must be one of the closed vocabulary —
-    the standard 'unknown {label}' error names the field."""
-    value = _require(raw, key)
-    if value not in vocab:
-        raise ValueError(f"unknown {label}: {value!r}")
-    return value
+TRecord = TypeVar("TRecord", bound=Identified)
 
 
-def _require(raw: Mapping[str, Any], key: str) -> str:
-    value = str(raw.get(key, "")).strip()
-    if not value:
-        raise ValueError(f"missing required field {key!r}")
-    return value
+@dataclass(frozen=True)
+class RecordField:
+    """One named field of a record's raw wire mapping — the mapping and the
+    key that names the field travel as one value, so every parse helper takes
+    the field instead of the same pair of parameters."""
+
+    # The evidence a basis carries beside its disposition or its stated text:
+    # the reviewer's own words, who recalled them, the date, a note. The live
+    # model's disposition filter (loft/live/identity_map.BasisKinds) keeps the
+    # same four, so the vocabulary has one home.
+    BASIS_EVIDENCE_FIELDS: ClassVar[tuple[str, ...]] = ("text", "by", "when", "note")
+    # The evidence fields an identification's proposal writes even when it
+    # states nothing (its wire shape carries its table's empty columns); the
+    # proposal's text is required, and every other field of the vocabulary
+    # joins a basis only when it says something.
+    PROPOSAL_WRITTEN_WHEN_EMPTY: ClassVar[tuple[str, ...]] = ("by", "when")
+
+    raw: Mapping[str, Any]
+    key: str
+
+    def dated(self) -> DatedFact | None:
+        """The dated fact the field states (dob, dod, a relationship
+        date) — None when the field is absent."""
+        value = self.raw.get(self.key)
+        return None if not value else DatedFact.from_dict(value, self.key)
+
+    def text(self) -> str:
+        """The field's stripped text; absent or empty fails loudly."""
+        value = str(self.raw.get(self.key, "")).strip()
+        if not value:
+            raise ValueError(f"missing required field {self.key!r}")
+        return value
+
+    def required(self, vocab: frozenset[str], label: str) -> str:
+        """A required field whose value must be one of the closed vocabulary —
+        the standard 'unknown {label}' error names the field."""
+        value = self.text()
+        if value not in vocab:
+            raise ValueError(f"unknown {label}: {value!r}")
+        return value
+
+    def basis(self) -> dict[str, str] | None:
+        """The evidence the field states — a person's or place's ``basis``
+        {text, by, when, note?}: for an estimate, the reviewer's own words;
+        for an identification's proposal, the document's own words. An empty
+        text is not a basis (the field is absent or it says something).
+
+        The field carries one of two shapes, told apart by the keys only one
+        of them must carry: the live model's disposition basis (``basis`` and
+        ``confidence``) or an identification's proposal (``text``). A
+        disposition basis keeps every evidence field it carries, so a value
+        that states both shapes loses nothing."""
+        value = self.raw.get(self.key)
+        if value is None:
+            return None
+        if "basis" in value or "confidence" in value:
+            return _disposition_basis(self.key, value)
+        return _proposed_basis(self.key, value)
+
+    def records(self, record_type: Callable[[dict[str, Any]], TRecord], label: str) -> tuple[TRecord, ...]:
+        """Parse the field's records and enforce unique ids — the shared
+        construction of the people/places/orgs/themes/imports tables.
+        ``record_type`` is bounded by ``Identified``: a class that builds a
+        record without ``id`` does not typecheck at this call."""
+        records = tuple(record_type(r) for r in self.raw.get(self.key, []))
+        ids = [record.id for record in records]
+        if len(ids) != len(set(ids)):
+            dupes = sorted({i for i in ids if ids.count(i) > 1})
+            raise ValueError(f"duplicate {label} ids: {dupes}")
+        return records
+
+
+def _disposition_basis(key: str, value: Mapping[str, Any]) -> dict[str, str]:
+    """The live model's disposition basis — the basis/confidence pair the record
+    is held with (knowledge/recollection + certain/possible) — plus every
+    evidence field the value carries. The pair is required; an evidence field
+    joins it when it says something, so a value that states a proposal's text
+    as well keeps that text."""
+    kind = str(value.get("basis", "")).strip()
+    confidence = str(value.get("confidence", "")).strip()
+    if not kind or not confidence:
+        raise ValueError(f"invalid {key}: {value!r} — basis and confidence are required")
+    out = {"basis": kind, "confidence": confidence}
+    for field_name in RecordField.BASIS_EVIDENCE_FIELDS:
+        evidence = str(value.get(field_name, "")).strip()
+        if evidence:
+            out[field_name] = evidence
+    return out
+
+
+def _proposed_basis(key: str, value: Mapping[str, Any]) -> dict[str, str]:
+    """An identification's proposal — the document's own words, which the value
+    must state — with the fields its wire shape always carries (who and when,
+    empty or not) and every other evidence field it states. A proposal has no
+    disposition: the record it proposes is not held with a basis/confidence
+    pair yet. Both shapes read ``BASIS_EVIDENCE_FIELDS``, so a field added to
+    the vocabulary is written by the proposal as well as the disposition."""
+    if not str(value.get("text", "")).strip():
+        raise ValueError(f"invalid {key}: {value!r} — the text is required")
+    out: dict[str, str] = {}
+    for field_name in RecordField.BASIS_EVIDENCE_FIELDS:
+        stated = str(value.get(field_name, "")).strip()
+        if stated or field_name in RecordField.PROPOSAL_WRITTEN_WHEN_EMPTY:
+            out[field_name] = stated
+    return out
 
 
 # The record statuses (people, places, orgs, and relationships). The
@@ -123,58 +219,6 @@ def _status(raw: Mapping[str, Any]) -> RecordStatus:
     if status not in RECORD_STATUSES:
         raise ValueError(f"bad record status: {status!r}")
     return cast(RecordStatus, status)
-
-
-def _basis(raw: Mapping[str, Any], key: str = "basis") -> dict[str, str] | None:
-    """The evidence a record states — a person's or place's ``basis``
-    {text, by, when, note?}: for an estimate, the reviewer's own words;
-    for an identification's proposal, the document's own words. An empty
-    text is not a basis (the field is absent or it says something)."""
-    basis = raw.get(key)
-    if basis is None:
-        return None
-    if "basis" in basis or "confidence" in basis:
-        # the live model's disposition basis: knowledge/recollection + certain/
-        # possible, with the reviewer's own words carried alongside
-        kind = str(basis.get("basis", "")).strip()
-        confidence = str(basis.get("confidence", "")).strip()
-        if not kind or not confidence:
-            raise ValueError(f"invalid {key}: {basis!r} — basis and confidence are required")
-        out = {"basis": kind, "confidence": confidence}
-        for field_name in ("text", "by", "when", "note"):
-            value = str(basis.get(field_name, "")).strip()
-            if value:
-                out[field_name] = value
-        return out
-    text = str(basis.get("text", "")).strip()
-    if not text:
-        raise ValueError(f"invalid {key}: {basis!r} — the text is required")
-    return {
-        "text": text,
-        "by": str(basis.get("by", "")).strip(),
-        "when": str(basis.get("when", "")).strip(),
-        **({"note": str(basis["note"]).strip()} if basis.get("note") else {}),
-    }
-
-
-TRecord = TypeVar("TRecord")
-
-
-def _unique_records(  # noqa: UP047  # pyrefly cannot infer PEP-695 T from the Callable argument; the TypeVar infers at each call site
-    raw: Mapping[str, Any], key: str, record_type: Callable[[dict[str, Any]], TRecord], label: str
-) -> tuple[TRecord, ...]:
-    """Parse one identity table's records and enforce unique ids — the
-    shared construction of the people/places/orgs/themes/imports tables."""
-    records = tuple(record_type(r) for r in raw.get(key, []))
-    # the constructor contract: every record class passed here (Person,
-    # Place, Org, Theme, Session) carries ``id`` — pyrefly cannot express
-    # that bound for frozen dataclasses, so the cast states the proven
-    # contract
-    ids = [cast(Any, r).id for r in records]
-    if len(ids) != len(set(ids)):
-        dupes = sorted({i for i in ids if ids.count(i) > 1})
-        raise ValueError(f"duplicate {label} ids: {dupes}")
-    return records
 
 
 @dataclass(frozen=True)
@@ -213,7 +257,7 @@ class Person:
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Person:
-        record_id = _require(raw, "id")
+        record_id = RecordField(raw, "id").text()
         if not is_valid_record_id(record_id):
             raise ValueError(f"invalid record id: {record_id!r}")
 
@@ -226,10 +270,10 @@ class Person:
             email = str(email).strip().lower()
             if not EMAIL_RE.fullmatch(email):
                 raise ValueError(f"invalid email: {email!r}")
-        basis = _basis(raw)
+        basis = RecordField(raw, "basis").basis()
         return cls(
             id=record_id,
-            name=_require(raw, "name"),
+            name=RecordField(raw, "name").text(),
             aliases=tuple(str(a) for a in (raw.get("aliases") or [])),
             email=email,
             pronouns=raw.get("pronouns"),
@@ -237,8 +281,8 @@ class Person:
             relation=str(raw.get("relation", "")),
             bio=str(raw.get("bio", "")),
             hue=raw.get("hue"),
-            dob=_dated(raw, "dob"),
-            dod=_dated(raw, "dod"),
+            dob=RecordField(raw, "dob").dated(),
+            dod=RecordField(raw, "dod").dated(),
             occupations=tuple(str(o) for o in (raw.get("occupations") or [])),
             residence=tuple(dict(e) for e in residence),
             status=_status(raw),
@@ -305,7 +349,7 @@ class Place:
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Place:
-        place_id = _require(raw, "id")
+        place_id = RecordField(raw, "id").text()
         if not is_valid_record_id(place_id):
             raise ValueError(f"invalid record id: {place_id!r}")
         precision = str(raw.get("precision", ""))
@@ -313,7 +357,7 @@ class Place:
             raise ValueError(f"unknown place precision: {precision!r}")
         return cls(
             id=place_id,
-            name=_require(raw, "name"),
+            name=RecordField(raw, "name").text(),
             aliases=tuple(str(a) for a in (raw.get("aliases") or [])),
             note=str(raw.get("note", "")),
             precision=str(raw.get("precision", "")),
@@ -323,7 +367,7 @@ class Place:
             y=raw.get("y"),
             address=str(raw.get("address", "")),
             status=_status(raw),
-            basis=_basis(raw),
+            basis=RecordField(raw, "basis").basis(),
         )
 
     def as_proposed(self) -> Place:
@@ -376,12 +420,12 @@ class Relationship:
         if status is not None and status not in RECORD_STATUSES:
             raise ValueError(f"bad relationship status: {status!r}")
         return cls(
-            a=_require(raw, "a"),
-            b=_require(raw, "b"),
+            a=RecordField(raw, "a").text(),
+            b=RecordField(raw, "b").text(),
             kind=kind,
             label_a=str(raw.get("label_a", "")),
             label_b=str(raw.get("label_b", "")),
-            date=_dated(raw, "date"),
+            date=RecordField(raw, "date").dated(),
             status=status,
         )
 
@@ -412,7 +456,7 @@ class PeopleTable:
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> PeopleTable:
-        people = _unique_records(raw, key="people", record_type=Person.from_dict, label="person")
+        people = RecordField(raw, "people").records(Person.from_dict, label="person")
         relationships = tuple(Relationship.from_dict(r) for r in raw.get("relationships", []))
         known = {p.id for p in people}
         for rel in relationships:
@@ -499,7 +543,7 @@ class PlacesTable:
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> PlacesTable:
         return cls(
-            places=_unique_records(raw, key="places", record_type=Place.from_dict, label="place"),
+            places=RecordField(raw, "places").records(Place.from_dict, label="place"),
             supersedes=raw.get("supersedes"),
         )
 
@@ -575,12 +619,12 @@ class Org:
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Org:
-        org_id = _require(raw, "id")
+        org_id = RecordField(raw, "id").text()
         if not is_valid_record_id(org_id):
             raise ValueError(f"invalid record id: {org_id!r}")
         return cls(
             id=org_id,
-            name=_require(raw, "name"),
+            name=RecordField(raw, "name").text(),
             aliases=tuple(str(a) for a in (raw.get("aliases") or [])),
             address=str(raw.get("address", "")),
             branch=str(raw.get("branch", "")),
@@ -619,7 +663,7 @@ class OrgsTable:
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> OrgsTable:
         return cls(
-            orgs=_unique_records(raw, key="orgs", record_type=Org.from_dict, label="org"),
+            orgs=RecordField(raw, "orgs").records(Org.from_dict, label="org"),
             supersedes=raw.get("supersedes"),
         )
 
@@ -639,7 +683,7 @@ class ThemesTable:
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> ThemesTable:
         return cls(
-            themes=_unique_records(raw, key="themes", record_type=Theme.from_dict, label="theme"),
+            themes=RecordField(raw, "themes").records(Theme.from_dict, label="theme"),
             supersedes=raw.get("supersedes"),
         )
 
@@ -698,7 +742,7 @@ class ReviewDecision:
         if decision not in ("attested", "estimated", "pending", "delete"):
             raise ValueError(f"unknown review decision: {decision!r}")
         return cls(
-            person_id=_require(raw, "person_id"),
+            person_id=RecordField(raw, "person_id").text(),
             decision=cast(Literal["attested", "estimated", "pending", "delete"], decision),
             when=str(raw.get("when", "")),
             basis=raw.get("basis"),
@@ -770,7 +814,7 @@ class Session:
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Session:
-        session_id = _require(raw, "id")
+        session_id = RecordField(raw, "id").text()
         if not is_valid_record_id(session_id):
             raise ValueError(f"invalid record id: {session_id!r}")
         status = str(raw.get("status", "pending"))
@@ -779,7 +823,7 @@ class Session:
         return cls(
             id=session_id,
             kind=str(raw.get("kind", "import-review")),
-            title=_require(raw, "title"),
+            title=RecordField(raw, "title").text(),
             status=status,
             current=raw.get("current"),
             attempts=tuple(Attempt.from_dict(a) for a in (raw.get("attempts") or [])),
@@ -842,7 +886,7 @@ class ImportsTable:
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> ImportsTable:
         return cls(
-            imports=_unique_records(raw, key="imports", record_type=Session.from_dict, label="import session"),
+            imports=RecordField(raw, "imports").records(Session.from_dict, label="import session"),
             supersedes=raw.get("supersedes"),
         )
 
@@ -919,18 +963,41 @@ def split_content(item: Item) -> SplitItem:
     return SplitItem(sidecar=Item(sidecar), content=content)
 
 
-def _story_flag(raw: Mapping[str, Any], item_type: str, key: str, story_message: str, allow_story: bool) -> Any:
-    """One story flag (clarification, reflection, evidence): absent or a
-    boolean, and the flag's own story rule must hold — the write seam
-    fails loudly on anything else."""
-    value = raw.get(key)
-    if value is None:
-        return None
-    if not isinstance(value, bool):
-        raise ValueError(f"{key} must be a boolean")
-    if (item_type == "story") != allow_story:
-        raise ValueError(story_message)
-    return value
+@dataclass(frozen=True)
+class ItemFlag:
+    """One flag a memory's sidecar may state (docs/PRD/MEMORIES.md — "a flag,
+    not a new type"): the key that names it, whether a story is the item that
+    carries it, and the words a misplaced flag fails with. The rule is the
+    item's vocabulary, so it lives here; a raw-field reader only supplies the
+    value."""
+
+    key: str
+    on_story: bool
+    misplaced: str
+
+    def read(self, raw: Mapping[str, Any], item_type: str) -> bool | None:
+        """The flag as the item states it — absent or a boolean, and only on
+        the item kinds that may carry it; the write seam fails loudly on
+        anything else."""
+        value = raw.get(self.key)
+        if value is None:
+            return None
+        if not isinstance(value, bool):
+            raise ValueError(f"{self.key} must be a boolean")
+        if (item_type == "story") != self.on_story:
+            raise ValueError(self.misplaced)
+        return value
+
+
+# The memory's three flags: a story-shaped record may be a clarification
+# fragment (it attests a person or an item) or a reflection (it mentions
+# someone or somewhere); evidence is the other side — an account, a fragment
+# or a reflection is evidence, and a story never is.
+CLARIFICATION_FLAG = ItemFlag("clarification", on_story=True, misplaced="only a story can be a clarification fragment")
+REFLECTION_FLAG = ItemFlag("reflection", on_story=True, misplaced="only a story can be a reflection")
+EVIDENCE_FLAG = ItemFlag(
+    "evidence", on_story=False, misplaced="a story is never evidence — accounts, fragments and reflections are"
+)
 
 
 @dataclass(frozen=True)
@@ -1057,11 +1124,11 @@ class Item:
     def from_dict(cls, raw: dict[str, Any]) -> Item:
         """Validate a sidecar; raise ValueError on any invariant break."""
         item = cls(dict(raw))
-        record_id = _require(raw, "id")
+        record_id = RecordField(raw, "id").text()
         if not is_valid_record_id(record_id):
             raise ValueError(f"invalid record id: {record_id!r}")
-        item_type = _required_value(raw, key="type", vocab=ITEM_TYPES, label="item type")
-        status = _required_value(raw, key="status", vocab=ITEM_STATUSES, label="item status")
+        item_type = RecordField(raw, "type").required(vocab=ITEM_TYPES, label="item type")
+        status = RecordField(raw, "status").required(vocab=ITEM_STATUSES, label="item status")
         if status == "deleted":  # the tombstone shape — nothing else required
             return item
         if item_type == "event":
@@ -1070,9 +1137,9 @@ class Item:
                 raise ValueError("an event item needs a kind (birth|marriage|death|other)")
             if kind not in EVENT_KINDS:
                 raise ValueError(f"unknown event kind: {kind!r}")
-        _require(raw, "title")
-        _require(raw, "date")
-        precision = _required_value(raw, key="date_precision", vocab=PRECISIONS, label="date precision")
+        RecordField(raw, "title").text()
+        RecordField(raw, "date").text()
+        precision = RecordField(raw, "date_precision").required(vocab=PRECISIONS, label="date precision")
         if not viable_date(str(raw.get("date", ""))):
             # fail loudly at the write seam — an item with no viable date is
             # invisible or misdated everywhere; the whole form
@@ -1102,30 +1169,16 @@ class Item:
         identified = raw.get("identified")
         if identified is not None and not isinstance(identified, bool):
             raise ValueError("identified must be a boolean")
-        clarification = _story_flag(
-            raw,
-            item_type,
-            key="clarification",
-            story_message="only a story can be a clarification fragment",
-            allow_story=True,
-        )
+        clarification = CLARIFICATION_FLAG.read(raw, item_type)
         if clarification is not None and not (raw.get("people") or raw.get("items")):
             raise ValueError("a clarification fragment must name what it attests (people or items)")
-        reflection = _story_flag(
-            raw, item_type, key="reflection", story_message="only a story can be a reflection", allow_story=True
-        )
+        reflection = REFLECTION_FLAG.read(raw, item_type)
         if reflection is not None:
             if clarification:
                 raise ValueError("a story is a clarification or a reflection, not both")
             if not (raw.get("people") or raw.get("places")):
                 raise ValueError("a reflection must mention someone or somewhere (people or places)")
-        evidence = _story_flag(
-            raw,
-            item_type,
-            key="evidence",
-            story_message="a story is never evidence — accounts, fragments and reflections are",
-            allow_story=False,
-        )
+        evidence = EVIDENCE_FLAG.read(raw, item_type)
         if evidence is not None and not (raw.get("people") or raw.get("places") or raw.get("items")):
             raise ValueError("an evidence record must attest someone or somewhere (people, places or items)")
         return item

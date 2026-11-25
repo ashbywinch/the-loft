@@ -173,3 +173,34 @@ def test_a_prefixed_review_job_name_still_matches() -> None:
     assert gate._job_name_matches("review / pr-review", "pr-review")
     assert not gate._job_name_matches("review / verify", "pr-review")
     assert not gate._job_name_matches("pr-review / extra", "pr-review")
+
+
+def test_a_run_without_the_review_job_names_that_as_the_reason() -> None:
+    """The reason must name the cause it observed. A run listing no job by the
+    review's name is not a job that is still running — that sentence sends the
+    reader looking for a job that was never there."""
+
+    def jobs(url: str, token: str) -> object:
+        return {"jobs": [{"name": "review / build", "id": 7}]}
+
+    with pytest.raises(gate._NoLogError) as raised:
+        gate._ReviewGate("o/r", "t", get_json=jobs).job_log("42", "pr-review")
+    assert "pr-review" in str(raised.value)
+    assert "running" not in str(raised.value)
+
+
+def test_an_empty_served_log_is_not_a_withheld_one() -> None:
+    """A log that was served and says nothing is the step being silent, not
+    GitHub withholding a log for a job that is still running."""
+    reason = gate._BotLog("").reason
+    assert "empty" in reason
+    assert "running" not in reason
+
+
+def test_a_plain_text_log_is_reported_as_unstructured() -> None:
+    """Text with no structured lines is output the extractor cannot quote.
+    Saying the step produced no output would be false, and a reader who
+    believes it stops looking for the line that explains the failure."""
+    reason = gate._BotLog("Setting up job\nThe process completed with exit code 0").reason
+    assert "plain text" in reason
+    assert "no output at all" not in reason

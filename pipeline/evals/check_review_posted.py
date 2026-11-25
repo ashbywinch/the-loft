@@ -71,6 +71,13 @@ class _ApiError(Exception):
     promised — a proxy's error page, a truncated read."""
 
 
+class _NoLogError(Exception):
+    """There is no log to read, and the message names which of the ways it is
+    missing: no run to read, no jobs listed yet, no job carrying the review's
+    name, no download URL. The caller repeats it, so the failure names the
+    cause it observed instead of guessing at one."""
+
+
 def _get_json(url: str, token: str, get: Callable[[str, str], bytes] = _get):
     """Fetch and parse one API response. The transport is the optional seam
     (the repo's DI convention): tests inject a fake, production uses ``_get``."""
@@ -126,24 +133,31 @@ class _ReviewGate:
         """GET a repository-relative API path."""
         return self.get_json(f"https://api.github.com/repos/{self.repo}/{path}", self.token)
 
-    def job_log(self) -> str | None:
-        """The running job's own accumulated log (the bot step's output), or
-        None when there is no log to read: no run id, no jobs yet, no job by
-        that name. A fetch that fails raises, so the caller can say which
-        failure it was. Requires the workflow's ``actions: read``."""
-        run_id = os.environ.get("GITHUB_RUN_ID")
+    def job_log(self, run_id: str | None = None, wanted: str | None = None) -> str:
+        """The review job's accumulated log (the bot step's output). Requires
+        the workflow's ``actions: read``.
+
+        ``run_id`` and ``wanted`` default to this workflow's own environment
+        (``GITHUB_RUN_ID``, ``REVIEW_JOB_NAME``); passing them is the test seam.
+
+        A log that is not there raises ``_NoLogError`` naming which way it is not
+        there; a fetch that fails raises its own error. Nothing is returned to
+        stand for "no log": a caller that conflated the two would report a
+        cause it never observed.
+        """
+        run_id = run_id or os.environ.get("GITHUB_RUN_ID")
         if not run_id:
-            return None
+            raise _NoLogError("GITHUB_RUN_ID is not set, so there is no run to read")
         jobs = self.api(f"actions/runs/{run_id}/jobs")
         if not jobs.get("jobs"):
-            return None
+            raise _NoLogError(f"run {run_id} lists no jobs")
         # The reason we want lives in the REVIEW job's log, not in whichever job
         # the API happens to list first — this runs from a second job in the
         # same run, and listing order is not the workflow's order.
-        wanted = os.environ.get("REVIEW_JOB_NAME", "pr-review")
+        wanted = wanted or os.environ.get("REVIEW_JOB_NAME", "pr-review")
         matches = [j for j in jobs["jobs"] if _job_name_matches(j.get("name", ""), wanted)]
         if not matches:
-            return None
+            raise _NoLogError(f"the run lists no job named {wanted!r} (set REVIEW_JOB_NAME)")
         req = _ApiRequest(f"https://api.github.com/repos/{self.repo}/actions/jobs/{matches[0]['id']}/logs", self.token)
         try:
             resp = _OPENER.open(req)
@@ -157,7 +171,7 @@ class _ReviewGate:
                 raise
             location = e.headers.get("Location")
             if not location:
-                return None
+                raise _NoLogError("the log download answered a redirect with no Location") from e
             return urllib.request.urlopen(location, timeout=30).read().decode("utf-8", errors="replace")
         return resp.read().decode("utf-8", errors="replace")
 
@@ -182,8 +196,8 @@ class _BotLog:
     SKIP_MARKERS = ("PR has no analyzable files", "skipping review", "skipping describe")
     TAIL_LINES = 12  # lines after a failure marker worth reporting
 
-    def __init__(self, text: str | None) -> None:
-        self.text = text or ""
+    def __init__(self, text: str) -> None:
+        self.text = text
         self._structured = [line for line in self.text.splitlines() if '"text"' in line]
 
     @property
@@ -205,15 +219,18 @@ class _BotLog:
 
     @property
     def reason(self) -> str:
-        """Why the review did not post, in the bot's own words."""
+        """Why the review did not post, in the bot's own words.
+
+        An empty log is a log that was served and said nothing; a log with no
+        structured lines is one the step wrote as plain text. The two are
+        different witnesses and get different sentences — neither is asked to
+        stand for a log that could not be read at all, which arrives here as a
+        fetch error (`_NoLogError`).
+        """
         if not self.text:
-            # the fail-loud step runs inside the bot's OWN job — GitHub does not
-            # serve a job's log until the job completes, so the reason extractor
-            # can never see it here. Run this check from a SEPARATE job for the
-            # real reason; this is the honest admission that no review posted.
-            return "the bot's job log is not served while the job is still running (run this check from a separate job)"
+            return "the bot's job log is empty: the step produced no output at all"
         if not self._structured:
-            return "the bot's step produced no log output"
+            return "the bot's step wrote no structured output — every line was plain text"
         return self._from_structured()
 
     def _from_structured(self) -> str:
@@ -402,7 +419,7 @@ def main() -> int:
     if not _review_covers(comments, sha, reviewed_after):
         try:
             log = gate.job_log()
-        except (_ApiError, KeyError, URLError) as e:
+        except (_ApiError, _NoLogError, KeyError, URLError) as e:
             print(
                 f"::error::AI review did not post for commit {sha} — the job log could not be "
                 f"read ({type(e).__name__}: {e}), so the reason is unknown."

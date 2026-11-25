@@ -134,9 +134,9 @@ ignore = ["unused"]
 [lucidlint."tools/archive.py"]
 ignore = ["unused", "god-class", "partition", "long-param-list"]
 [lucidlint."tools/memory.py"]
-ignore = ["unused", "data-clump"]
+ignore = ["unused"]
 [lucidlint."tools/records.py"]
-ignore = ["unused", "data-clump", "assembly-class"]
+ignore = ["unused", "assembly-class"]
 
 [lucidlint."pipeline/chain.py"]
 ignore = ["unused"]
@@ -182,12 +182,6 @@ ignore = ["partition"]
 # the write half cannot be used outside a transaction.
 [lucidlint."loft/live/people.py"]
 ignore = ["partition"]
-
-# data-clump: the person row mapping's (connection, person_id) pair is the
-# row's key in every helper that reads or removes it; a wrapper type would be
-# unwrapped at each SQL call and adds nothing the function name does not say.
-[lucidlint."loft/live/person_row.py"]
-ignore = ["data-clump"]
 
 # fakefs: the exporter tests use a real SQLite file and a real archive tree on
 # tmp_path — the append-only store, sqlite semantics and the versioned file

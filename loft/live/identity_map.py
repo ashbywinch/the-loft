@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from tools.records import RecordField
+
 Basis = dict[str, str]
 
 
@@ -19,7 +21,9 @@ class BasisKinds:
 
     KNOWN: Basis = {"basis": "knowledge", "confidence": "certain"}
     RECOLLECTED: Basis = {"basis": "recollection", "confidence": "possible"}
-    EVIDENCE: tuple[str, ...] = ("text", "by", "when", "note")
+    # the record's own vocabulary (RecordField.BASIS_EVIDENCE_FIELDS), so a
+    # field the wire carries is a field the migration keeps
+    EVIDENCE: tuple[str, ...] = RecordField.BASIS_EVIDENCE_FIELDS
 
 
 def renders_estimated(basis: dict[str, str] | None) -> bool:

@@ -1,42 +1,27 @@
-"""Called by .github/workflows/pr-agent.yml — fail the PR if the review bot
-did not post a "PR Reviewer Guide" comment covering the head commit.
-The review may have failed silently; this check prevents merging unreviewed.
+"""Fail the PR when no review covers its head commit.
 
-A comment covers the head commit when its body references the commit's SHA
-(the incremental-review form, "Starting from commit .../<SHA>") or it was
-posted after the head commit landed (the first review on a PR is posted
-without the SHA marker — observed: pr-agent v0.41.1 regular reviews never
-contain the head SHA). The range-start SHA in the incremental body is the
-first NEW commit, not the head — coverage still falls to the posted-after
-rule; the explicit form is belt-and-braces for reviews that embed it.
+The bot's own step cannot be trusted: ``PRAgent.handle_request`` catches every
+exception (it logs "Failed to process the command." and returns False) and
+``github_action_runner.py`` discards that, so the action exits 0 whether or not
+a review happened. This check therefore asks the API what exists, and asks the
+run log why when nothing does.
 
-The bot's own SKIP verdict also covers: an incremental review with no
-files changed since the previous review posts "Incremental Review
-Skipped" (linking the previous review) instead of a guide. That skip IS
-the reviewed verdict — the diff since the last review was examined and
-found empty (merging the base branch in, for example, changes nothing in
-the PR's diff) — so it covers the commit exactly like the human /skip
-opt-out does. A run that genuinely failed to post leaves no comment and
-still fails.
+A head is covered by exactly three forms:
 
-A second, silent skip is real too: when the PR has no files the bot can
-analyse — a one-file CSV diff, for instance — pr-agent logs "PR has no
-analyzable files" and "skipping review" and posts nothing, by design. The
-run log is the only witness, so the guard reads it: a clean skip (the
-marker with no traceback and no token-cap) passes, and the same log with a
-failure marker still fails.
+- **a human opt-out** — the whole body is ``/skip``. The owner chose not to have
+  this PR reviewed.
+- **a review guide** — ``## PR Reviewer Guide`` or ``## Incremental PR Reviewer
+  Guide``, posted or edited after this run started, or naming this head. The bot
+  reviewed it; naming the head lets a RE-RUN of the same head pass, and an edit
+  is how a persistent guide advances.
+- **the bot's skip** — ``Incremental Review Skipped`` from a machine account,
+  after this run started. The increment was empty: examined, nothing to say.
 
-Why the bot's own step cannot fail (2026-08-11, read from the v0.41.1
-source): ``PRAgent.handle_request`` catches EVERY exception with a bare
-``except`` — it logs "Failed to process the command." plus the traceback
-and returns False — and ``github_action_runner.py`` discards that return
-value, so the action exits 0 whether or not the review happened. A green
-bot step is therefore meaningless, and the only truthful signal is this
-check. To make the failure SELF-EXPLAINING rather than a guess, the check
-fetches the run's own log (the actions API) and extracts the bot's error
-lines: the "Failed to process the command." traceback, model/API errors,
-and the diff-token-cap marker — the check's failure message names the
-reason instead of "may have failed silently".
+Nothing else counts, and a head that is not covered fails with the reason read
+from the log (the pruning cap, the swallowed traceback, or the last thing the
+bot said). The failure direction is deliberate: a miss costs a red gate on a
+reviewed PR, never a green gate on an unreviewed one — which is why every
+comparison here errs toward failing.
 """
 
 import json
@@ -177,33 +162,52 @@ class _ReviewGate:
 
 
 class _BotLog:
-    """The bot's own run log, read one way for every question asked of it.
+    """The bot's run log, read once into the facts the gate asks about.
 
-    Two facts come from it: whether the review died, and whether it
-    deliberately reviewed nothing. **Both scan the whole log**, so a marker
-    outside the JSON wrapper still counts — a run that died cannot be read as a
-    clean skip because its traceback was logged as plain text. Only the failure
-    *message* narrows to the bot's structured lines (`"text"`), because those
-    carry the words worth quoting; narrowing the scan itself would let a silent
-    failure read as a verdict.
+    The log is a third party's prose, so it is read here and nowhere else: every
+    later question is about a fact, never about a substring. Three facts, and
+    each is a field so the answer cannot drift from the reading:
 
-    The reason is extracted rather than guessed: the diff-token cap that
-    precedes a pruned diff, the swallowed traceback seam, and failing both, the
-    last thing the bot said.
+    * ``over_size`` — the pruning line, present when the diff was cut past the
+      review's token cap;
+    * ``failure`` — the first line that shows the run died;
+    * ``skip`` — the line naming a deliberate skip (nothing to analyse).
+
+    All three are read from the **whole** log, so a marker logged as plain text
+    still counts: a run that died cannot be read as a clean skip. Only
+    ``reason``'s quote narrows to the bot's structured lines (``"text"``),
+    because those carry the words worth repeating.
     """
 
     FAILURE_MARKERS = ("Failed to process the command.", "Traceback (most recent call last)")
     SKIP_MARKERS = ("PR has no analyzable files", "skipping review", "skipping describe")
-    TAIL_LINES = 12  # lines after a failure marker worth reporting
+    TAIL_LINES = 12  # lines after a failure marker worth quoting
 
     def __init__(self, text: str) -> None:
         self.text = text
-        self._structured = [line for line in self.text.splitlines() if '"text"' in line]
+        self.structured = tuple(line for line in text.splitlines() if '"text"' in line)
+        self.over_size = self._first(_SIZE_RE)
+        self.failure = self._first_line(self.FAILURE_MARKERS)
+        self.skip = self._first_line(self.SKIP_MARKERS)
+
+    def _first(self, pattern: re.Pattern[str]) -> tuple[str, str] | None:
+        """The two numbers on the first line that carries the size marker."""
+        for line in self.text.splitlines():
+            match = pattern.search(line)
+            if match:
+                return match.group(1), match.group(2)
+        return None
+
+    def _first_line(self, markers: tuple[str, ...]) -> str | None:
+        for line in self.text.splitlines():
+            if any(marker in line for marker in markers):
+                return line
+        return None
 
     @property
     def failed(self) -> bool:
-        """The review died: a failure marker or the token-cap line, anywhere."""
-        return any(mark in self.text for mark in self.FAILURE_MARKERS) or bool(_SIZE_RE.search(self.text))
+        """The review died: the diff was pruned past the cap, or the bot logged a failure."""
+        return self.over_size is not None or self.failure is not None
 
     @property
     def skipped(self) -> bool:
@@ -211,44 +215,42 @@ class _BotLog:
 
         pr-agent skips a PR it has no analyzable files for — a lone CSV diff,
         say — logs why, and posts no comment. That is a verdict, not a failure,
-        and it counts only when the same log carries no failure.
+        so it holds only when the log names no failure.
         """
-        if not self.text or self.failed:
-            return False
-        return any(marker in self.text for marker in self.SKIP_MARKERS)
+        return self.skip is not None and not self.failed
 
     @property
     def reason(self) -> str:
-        """Why the review did not post, in the bot's own words.
+        """Why the review did not post, from the fact that is present.
 
-        An empty log is a log that was served and said nothing; a log with no
+        An empty log is one that was served and said nothing; a log with no
         structured lines is one the step wrote as plain text. The two are
-        different witnesses and get different sentences — neither is asked to
-        stand for a log that could not be read at all, which arrives here as a
-        fetch error (`_NoLogError`).
+        different witnesses and get different sentences — neither stands for a
+        log that could not be read at all, which arrives as `_NoLogError`.
         """
         if not self.text:
             return "the bot's job log is empty: the step produced no output at all"
-        if not self._structured:
+        if self.over_size is not None:
+            tokens, limit = self.over_size
+            return (
+                f"the PR's cumulative diff is {tokens} tokens — over the bot's "
+                f"{limit}-token review cap; the review died after pruning the diff"
+            )
+        if self.failure is not None:
+            return f"the bot logged an error before dying: {self._quote(self.failure)}"
+        if not self.structured:
             return "the bot's step wrote no structured output — every line was plain text"
-        return self._from_structured()
-
-    def _from_structured(self) -> str:
-        """The failure the bot's own records name, or the last thing it said."""
-        for line in self._structured:
-            match = _SIZE_RE.search(line)
-            if match:
-                return (
-                    f"the PR's cumulative diff is {match.group(1)} tokens — over the bot's "
-                    f"{match.group(2)}-token review cap; the review died after pruning the diff"
-                )
-        for index, line in enumerate(self._structured):
-            if any(mark in line for mark in self.FAILURE_MARKERS):
-                tail = [ln for ln in self._structured[index : index + self.TAIL_LINES] if ln.strip()]
-                snippet = " | ".join(ln.split("\t")[-1][:200] for ln in tail[:4])
-                return f"the bot logged an error before dying: {snippet}"
-        last = next((ln for ln in reversed(self._structured) if ln.strip()), "")
+        last = next((line for line in reversed(self.structured) if line.strip()), "")
         return f"the bot's last output before going silent: {last.split(chr(9))[-1][:200]}"
+
+    def _quote(self, marker_line: str) -> str:
+        """The error and the lines after it, joined for one sentence."""
+        start = next(
+            (index for index, line in enumerate(self.structured) if marker_line in line),
+            0,
+        )
+        tail = [line for line in self.structured[start : start + self.TAIL_LINES] if line.strip()]
+        return " | ".join(line.split("\t")[-1][:200] for line in tail[:4])
 
 
 @dataclass(frozen=True)
@@ -342,7 +344,13 @@ class _Coverage:
         """
         if not _opening(self.comment.body).startswith(_BotComment.GUIDE):
             return False
-        return f"commit/{sha}" in self.comment.body or self.posted_after
+        return self.names_head(sha) or self.posted_after
+
+    def names_head(self, sha: str) -> bool:
+        """Whether the guide names this head — the re-run of the same head posts a
+        guide this run did not create, and a guide that names the head is evidence
+        for this head whatever run posted it."""
+        return f"commit/{sha}" in self.comment.body
 
     @property
     def a_bot_skip(self) -> bool:

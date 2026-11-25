@@ -253,6 +253,20 @@ class _Comment:
         )
 
 
+class _BotComment:
+    """The bot's own comment formats — the gate's whole vocabulary.
+
+    These strings are the bot's output, not our preference: if one changes, this
+    file must change with it. A miss fails the gate on a review that did post,
+    which is the safe direction — the gate never passes a review that did not
+    happen. A looser match would trade that for the opposite risk.
+    """
+
+    GUIDE = ("## PR Reviewer Guide", "## Incremental PR Reviewer Guide")
+    SKIPPED = "Incremental Review Skipped"
+    SKIP = "/skip"
+
+
 def _review_covers(comments: list[_Comment], sha: str, reviewed_after: str) -> bool:
     """Does any comment cover the head commit? A human /skip opt-out (applies
     to the whole PR), a posted guide (regular or incremental, referencing the
@@ -260,21 +274,21 @@ def _review_covers(comments: list[_Comment], sha: str, reviewed_after: str) -> b
     incremental-skip verdict (created after the head was received — the diff
     was examined and found empty, so the skip is the review, not a
     failure)."""
-    if any(c.body.strip() == "/skip" for c in comments):
+    if any(c.body.strip() == _BotComment.SKIP for c in comments):
         return True
     # The guide is EDITED in place, so created_at never advances and pr-agent's
     # persistent-state read can fail without a SHA footer — an edit after the
     # head arrived is coverage.
     return any(
         (
-            c.body.startswith(("## PR Reviewer Guide", "## Incremental PR Reviewer Guide"))
+            c.body.startswith(_BotComment.GUIDE)
             and (
                 f"commit/{sha}" in c.body  # the incremental "Starting from commit .../<SHA>" form
                 or c.created_at >= reviewed_after
                 or c.updated_at >= reviewed_after
             )
         )
-        or (c.body.startswith("Incremental Review Skipped") and c.user_type == "Bot" and c.created_at >= reviewed_after)
+        or (c.body.startswith(_BotComment.SKIPPED) and c.user_type == "Bot" and c.created_at >= reviewed_after)
         for c in comments
     )
 

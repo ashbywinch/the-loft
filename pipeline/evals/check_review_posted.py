@@ -146,24 +146,19 @@ class _ReviewGate:
         req = _ApiRequest(f"https://api.github.com/repos/{self.repo}/actions/jobs/{matches[0]['id']}/logs", self.token)
         try:
             resp = _OPENER.open(req)
-            # GitHub answers the log endpoint with a redirect to blob storage.
-            # Whether the custom opener raises on that or hands the response
-            # back depends on its handler set, so handle both: follow the
-            # Location ourselves, WITHOUT the token — the redirect target is a
-            # third-party host and must not receive it.
-            if getattr(resp, "status", 200) in (301, 302, 303, 307, 308):
-                location = resp.headers.get("Location")
-                if not location:
-                    return None
-                return urllib.request.urlopen(location, timeout=30).read().decode("utf-8", errors="replace")
-            return resp.read().decode("utf-8", errors="replace")
         except HTTPError as e:
+            # GitHub answers the log endpoint with a redirect to blob storage, and
+            # this opener's error handler is what raises on it — that is how the
+            # redirect is stopped from being followed WITH our token. Follow the
+            # signed URL ourselves, without it: the target is a third-party host
+            # that must never receive a token.
             if e.code not in (301, 302, 303, 307, 308):
                 raise
             location = e.headers.get("Location")
             if not location:
                 return None
             return urllib.request.urlopen(location, timeout=30).read().decode("utf-8", errors="replace")
+        return resp.read().decode("utf-8", errors="replace")
 
 
 def _bot_failure_reason(log: str | None) -> str:

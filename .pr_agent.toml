@@ -50,7 +50,11 @@ repo_context_files = [
 persistent_comment = true
 require_tests_review = true
 require_security_review = true
-num_max_findings = 50
+# Measured, not chosen: 12 completed eleven consecutive reviews on one PR;
+# 50 truncated the answer on a 10-file PR three times (FallbackEligibleError,
+# the whole review lost). The cap bounds the answer's length, so it is set
+# where a review finishes rather than where it would be exhaustive.
+num_max_findings = 20
 # Publish each finding as a verified inline review comment (the pinned action
 # implements get_persistent_comment_bodies/get_recent_inline_comment_bodies).
 inline_key_issues = true
@@ -65,6 +69,7 @@ extra_instructions = """
 - **Folder structure.** Report a missing or malformed required doc in docs/documentation-structure.md. Every doc must be reachable from AGENTS.md; skills are exempt because the harness discovers them.
 - **UX.** Report deviations from docs/ux-standards.md.
 - **Structure.** Report a missed class (a bare dict, tuple or list in a record position), a name that violates the object model, and a separation-of-concerns violation.
+- **Shape.** Each finding is one sentence: `path:line` — the defect — the rule it breaks. No restatement of the code, no praise, no closing summary. A review that runs past the model's output budget is truncated and delivers nothing, so the answer is written to fit.
 - **Suppressions.** Report a suppression whose why fails the evidence bar in docs/coding-standards.md, in every form that section names (`lucidlint: ignore`, `ignore-file`, `# type: ignore`, `#[allow(...)]`, `# noqa`). Only code that carries one is checked; asking for one where none exists is not a finding.
 """
 

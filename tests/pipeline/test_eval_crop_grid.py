@@ -17,7 +17,7 @@ from typing import Any
 import pytest
 from PIL import Image
 
-from pipeline.evals.eval_crop_grid import DEFAULT_VISION_OPTIONS, CropRead, ReadFailure, read_crop, run
+from pipeline.evals.eval_crop_grid import DEFAULT_VISION_OPTIONS, CropRead, PageCropRun, ReadFailure, read_crop, run
 from pipeline.evals.eval_geometry import CropReading
 from pipeline.layout import Layout
 from pipeline.layout_line import LayoutLine
@@ -171,7 +171,7 @@ def test_the_run_reports_the_failed_re_read(tmp_path: Path) -> None:
     PipelineStore(work_dir).write("batch-1/ocr-guess/p1.layout.json", json.dumps(layout.to_dict()))
     calls, urlopen = _upright_then(VERTICAL)
 
-    report = run("batch-1", "p1", work_dir, cols=1, rows=1, options=_options(urlopen))
+    report = run(PageCropRun("batch-1", "p1", work_dir, cols=1, rows=1, options=_options(urlopen)))
 
     assert len(calls) == 2
     assert report.failed_crops == 0

@@ -149,12 +149,6 @@ ignore = ["unused"]
 [lucidlint."pipeline/api/sync.py"]
 ignore = ["long-param-list"]
 
-# long-param-list: the crop-grid run's inputs ARE the page's state — the CLI
-# and its one test call it with the same six values, and a type would rename
-# them without removing one.
-[lucidlint."pipeline/evals/eval_crop_grid.py"]
-ignore = ["long-param-list"]
-
 # latent-class: the GEDCOM serializer: one concern, one state; its methods are the export's steps, no field-disjoint partition (recorded 2026-10-08, held not split)
 [lucidlint."tools/gedcom_document.py"]
 ignore = ["god-class", "long-param-list", "partition"]

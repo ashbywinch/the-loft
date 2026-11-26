@@ -415,20 +415,28 @@ class CropGridReport:
         }
 
 
-def run(
-    batch_id: str,
-    page: str,
-    work_dir: Path,
-    cols: int = 2,
-    rows: int = 3,
-    options: VlmOptions | None = None,
-) -> CropGridReport:
+@dataclass(frozen=True)
+class PageCropRun:
+    """One page's crop-grid run: which batch and page, where the work lives, the
+    grid, and the read's config — the six values every call site passes together."""
+
+    batch_id: str
+    page: str
+    work_dir: Path
+    cols: int = 2
+    rows: int = 3
+    options: VlmOptions | None = None
+
+
+def run(request: PageCropRun) -> CropGridReport:
     """Read the page's crops, stitch, and report — the geometry
     experiment's ledger for one page. ``options`` is the page read's config;
     None is the vision model's options at the gateway's default endpoint and
     the client's own key rule (``find_api_key``). Each crop read states its own
     config from it (``_crop_read_options``)."""
-    read_options = options or DEFAULT_VISION_OPTIONS
+    batch_id, page, work_dir = request.batch_id, request.page, request.work_dir
+    cols, rows = request.cols, request.rows
+    read_options = request.options or DEFAULT_VISION_OPTIONS
     image_path = BatchArtefacts(work_dir, batch_id).oriented(f"{page}.jpg")
     store = PipelineStore(work_dir)
     layout = load_layout_store(store, f"{batch_id}/ocr-guess/{page}.layout.json")
@@ -503,7 +511,7 @@ def main(argv: list[str] | None = None) -> int:
         base_url=args.base_url,
         api_key=args.api_key or os.environ.get("OPENROUTER_API_KEY"),
     )
-    report = run(args.batch_id, args.page, args.work_dir, args.cols, args.rows, options)
+    report = run(PageCropRun(args.batch_id, args.page, args.work_dir, args.cols, args.rows, options))
     print(json.dumps(report.to_dict(), indent=1))
     return 0
 

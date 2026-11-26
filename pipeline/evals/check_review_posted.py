@@ -180,6 +180,9 @@ class _BotLog:
     """
 
     FAILURE_MARKERS = ("Failed to process the command.", "Traceback (most recent call last)")
+    # pr-agent logs this when a review ran and found nothing to publish: the
+    # increment was examined and came back clean, which is a verdict, not silence.
+    REVIEWED_NOTHING = "Review output is not published: no major issues detected."
     SKIP_MARKERS = ("PR has no analyzable files", "skipping review", "skipping describe")
     TAIL_LINES = 12  # lines after a failure marker worth quoting
 
@@ -189,6 +192,7 @@ class _BotLog:
         self.over_size = self._first(_SIZE_RE)
         self.failure = self._first_line(self.FAILURE_MARKERS)
         self.skip = self._first_line(self.SKIP_MARKERS)
+        self.nothing_to_publish = self.REVIEWED_NOTHING in text
 
     def _first(self, pattern: re.Pattern[str]) -> tuple[str, str] | None:
         """The two numbers on the first line that carries the size marker."""
@@ -377,6 +381,18 @@ class _Coverage:
         return self.a_human_skip or self.a_guide_for(sha) or self.a_bot_skip
 
 
+def _a_finding_posted(inline: list[_Comment], run_started: str) -> bool:
+    """Whether the review posted findings this run.
+
+    The incremental path publishes each finding as an inline review comment and
+    no guide (measured 2026-11-25 on the pinned action: four findings, no guide,
+    no check run). An inline comment from a machine, created during this run, is
+    therefore the review's own verdict — the same evidence as a guide, in the
+    only form this path produces.
+    """
+    return any(_from_a_machine(c.user_type) and c.created_at >= run_started for c in inline)
+
+
 def _review_covers(comments: list[_Comment], sha: str, run_started: str) -> bool:
     """Does any comment cover the head commit? Three forms count, one property each:
     a human skip, a guide for this head, or the bot's empty-increment skip."""
@@ -426,10 +442,11 @@ def main() -> int:
 
     try:
         comments = [_Comment.from_json(c) for c in gate.api(f"issues/{pr_number}/comments?per_page=100")]
+        inline = [_Comment.from_json(c) for c in gate.api(f"pulls/{pr_number}/comments?per_page=100")]
     except _ApiError as e:
         print(f"::error::PR comments are not fetchable ({e}) — the review coverage cannot be checked.")
         return 1
-    if not _review_covers(comments, sha, reviewed_after):
+    if not _review_covers(comments, sha, reviewed_after) and not _a_finding_posted(inline, reviewed_after):
         try:
             log = gate.job_log()
         except (_ApiError, _NoLogError, KeyError, URLError) as e:
@@ -438,13 +455,20 @@ def main() -> int:
                 f"read ({type(e).__name__}: {e}), so the reason is unknown."
             )
             return 1
-        if _BotLog(log).skipped:
+        log_read = _BotLog(log)
+        if log_read.nothing_to_publish:
+            print(
+                f"::notice::no review posted for {sha} — the reviewer examined the increment and "
+                "found nothing to publish. A clean review, not a failure."
+            )
+            return 0
+        if log_read.skipped:
             print(
                 f"::notice::no review posted for {sha} — the reviewer found nothing it can "
                 "analyse in this PR. A clean skip, not a failure."
             )
             return 0
-        reason = _BotLog(log).reason
+        reason = log_read.reason
         print(f"::error::AI review did not post for commit {sha} — {reason}.")
         return 1
     return 0

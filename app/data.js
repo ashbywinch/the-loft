@@ -46,8 +46,10 @@ export async function loadBootstrap() {
   if (res.status === 404 || res.status === 410) return { noApi: true };
   if (res.status === 401) return { signedIn: false };
   // signed in, but not on the family list: the app says so plainly instead of
-  // reporting a failed load (the private layer is the household's)
-  if (res.status === 403) return { notAMember: true };
+  // reporting a failed load (the private layer is the household's). Both facts
+  // are true — the session exists, and it is not family — and boot reads the
+  // pair in that order.
+  if (res.status === 403) return { signedIn: true, notAMember: true };
   if (!res.ok) {
     // Surface the operator's remedy, not an internal status code.
     let detail = "";

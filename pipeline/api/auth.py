@@ -44,10 +44,10 @@ from pipeline.api.device_grant import DeviceGrant
 from pipeline.api.device_poll_answer import DevicePollAnswer
 from pipeline.api.device_start_answer import DeviceStartAnswer
 from pipeline.api.device_token_request import DeviceTokenRequest
+from pipeline.api.family import is_family
 from pipeline.api.grant_answer import GrantAnswer
 from pipeline.api.login_answer import LoginAnswer
 from pipeline.api.me_answer import MeAnswer
-from pipeline.api.members import is_member
 from pipeline.api.minted_session import MintedSession
 from pipeline.api.oauth_client import OAuthClient
 from pipeline.api.oauth_request import OAuthRequest
@@ -165,7 +165,12 @@ def session_user_from_cookie(cookie: str | None) -> SessionUser | None:
 
 def login_url() -> LoginAnswer:
     """Start the flow — the authorization URL for the browser, or why the
-    flow could not start."""
+    flow could not start.
+
+    The account chooser is always asked for (``prompt=select_account``): the
+    gate's "sign in as someone else" must be able to pick a different Google
+    account, and without it Google silently re-enters with the remembered one
+    (a shared family phone is the normal device)."""
     config = _client_config()
     if config is None:
         return LoginAnswer.failed("Google OAuth is not configured (THE_LOFT_GOOGLE_WEB_CLIENT_ID)")
@@ -173,7 +178,9 @@ def login_url() -> LoginAnswer:
     state = secrets.token_urlsafe(GoogleOAuth._STATE_TOKEN_BYTES)
     flow = Flow.from_client_config(config.to_dict(), scopes=GoogleOAuth._WEB_SCOPES)
     flow.redirect_uri = f"{public_url()}/api/auth/callback"
-    authorization_url, _ = flow.authorization_url(access_type="online", include_granted_scopes="false", state=state)
+    authorization_url, _ = flow.authorization_url(
+        access_type="online", include_granted_scopes="false", prompt="select_account", state=state
+    )
     code_verifier = str(getattr(flow, "code_verifier", "") or "")
     if not code_verifier:
         return LoginAnswer.failed("PKCE code_verifier not generated")
@@ -232,7 +239,7 @@ def me_payload(archive: Archive, session: SessionUser | None) -> MeAnswer:
     person the email maps to (null when the account isn't in the archive)."""
     if session is None:
         return MeAnswer.anonymous()
-    return MeAnswer.signed_in(session, person_for_email(archive, session.email), is_member(session))
+    return MeAnswer.signed_in(session, person_for_email(archive, session.email), is_family(session))
 
 
 def callback_error_url(error: str) -> str:

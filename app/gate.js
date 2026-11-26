@@ -15,7 +15,7 @@ export function gateScreen({ notAMember = false } = {}) {
       "p",
       { class: "story" },
       notAMember
-        ? "You're signed in, but this archive belongs to one family — and this account isn't on its list."
+        ? "You're signed in, but this archive belongs to one family — and this account isn't part of it."
         : "The family archive — sign in with your Google account to read it.",
     ),
     el("p", {}, [

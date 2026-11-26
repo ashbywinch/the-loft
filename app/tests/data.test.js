@@ -28,7 +28,7 @@ describe("the private layer's refusal", () => {
       "fetch",
       vi.fn(async () => ({ ok: false, status: 403, json: async () => ({ error: "not on this archive's family list" }) })),
     );
-    expect(await loadBootstrap()).toEqual({ notAMember: true });
+    expect(await loadBootstrap()).toEqual({ signedIn: true, notAMember: true });
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 401, json: async () => ({}) })));
     expect(await loadBootstrap()).toEqual({ signedIn: false });
   });

@@ -564,10 +564,13 @@ def test_a_signed_in_stranger_reads_nothing(server: ServerFixture) -> None:
             # the identity route still answers — the app must be able to say
             # who is signed in, and that they are not family
             assert status == 200, path
-            assert b'"member": false' in body.replace(b'"member":false', b'"member": false'), body
+            assert b'"is_family": false' in body.replace(b'"is_family":false', b'"is_family": false'), body
             continue
         assert status == 403, f"{path} answered {status}"
-        assert b"not on this archive's family list" in body, body
+        assert b"not on the archive's family list" in body, body
+        # the refusal is a fact about the request, never a copy of the
+        # account: the body must not hand anyone reading the screen the email
+        assert b"stranger@example.com" not in body, body
     # the same routes answer the family
     status, _ = server.get("/api/sync/batches", cookie=server.cookie)
     assert status == 200
@@ -575,14 +578,12 @@ def test_a_signed_in_stranger_reads_nothing(server: ServerFixture) -> None:
     assert status == 200
 
 
-def test_me_names_the_member_state(server: ServerFixture) -> None:
+def test_me_names_the_family_state(server: ServerFixture) -> None:
     """The app decides between the archive and the "not family" screen from
     this one answer, so it states it."""
-    import json as _json
-
     status, raw = server.get("/api/auth/me", cookie=server.cookie)
     assert status == 200
-    assert _json.loads(raw)["member"] is True
+    assert json.loads(raw)["is_family"] is True
 
 
 def test_data_files_require_a_session(server: ServerFixture) -> None:

@@ -99,7 +99,7 @@ describe("the boot gate", () => {
     // the private layer answers 403 for a signed-in stranger; the screen must
     // name the remedy, not report a failed load
     const main = gateScreen({ notAMember: true });
-    expect(main.textContent).toContain("isn't on its list");
+    expect(main.textContent).toContain("isn't part of it");
     expect(main.textContent).toContain("Ask the family to add this address");
     expect(main.querySelector("button").textContent).toBe("Sign in as someone else");
   });

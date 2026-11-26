@@ -54,6 +54,7 @@ from pipeline.api.confirmation_request import ConfirmationRequest
 from pipeline.api.delete_request import DeleteRequest
 from pipeline.api.device_poll_request import DevicePollRequest
 from pipeline.api.error_answer import ErrorAnswer
+from pipeline.api.family import family_members
 from pipeline.api.health_answer import HealthAnswer
 from pipeline.api.identify_answer import IdentifyAnswer
 from pipeline.api.identify_decide_answer import IdentifyDecideAnswer, receipt
@@ -709,6 +710,15 @@ def build_app(
 
     # -- the static app + the data gate ------------------------------------
 
+    # the family list is the private layer's only key: an empty one refuses
+    # the whole family, and from a phone that refusal looks like a broken
+    # server. Say so once, at startup, where the operator is looking.
+    if not family_members():
+        logger.warning(
+            "family: THE_LOFT_FAMILY_MEMBERS is empty — nobody can read the archive "
+            "until it names the family's Google accounts"
+        )
+
     @app.middleware("http")
     async def log_shell_request(request: Request, call_next: Any) -> Any:
         # The shell's client identity is the first thing to know when a phone
@@ -751,7 +761,7 @@ def build_app(
     async def gate_data(request: Request, call_next: Any) -> Any:
         # the archive's data is the private layer — a session is required
         # to read it (user: content gated behind sign-in), and the session
-        # must be a FAMILY member's: a Google account that signs in is not
+        # must be one of the FAMILY's: a Google account that signs in is not
         # family (user: the household's allowlist). The app shell stays
         # public so the gate can load, and so does sign-in itself.
         path = request.url.path
@@ -765,9 +775,12 @@ def build_app(
                 # the API routes each answer their own 401 with their own words
                 if path.startswith("/data/"):
                     return JSONResponse({"ok": False, "error": "sign in to read the archive"}, status_code=401)
-            elif not auth.is_member(session):
+            elif not auth.is_family(session):
+                # two-tier: the phone gets the fact, the log gets the account —
+                # a mistyped allowlist entry is otherwise a 403 with no trace
+                logger.info("gate: refused %s — not on the family list", session.email)
                 return JSONResponse(
-                    {"ok": False, "error": f"{session.email} is not on this archive's family list"},
+                    ErrorAnswer("this account is not on the archive's family list").to_dict(),
                     status_code=403,
                 )
         return await call_next(request)

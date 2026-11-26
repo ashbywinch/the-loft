@@ -219,7 +219,8 @@ def test_a_landed_re_read_is_remapped_into_the_frame_the_crop_was_cut_at(tmp_pat
     """The crop is not square: 200 wide × 100 tall, so its +90 rotation is
     100 × 200 and a swapped frame would put the remapped box in the wrong
     aspect. The full rotated frame maps back onto the full crop frame — the
-    cut and the remap use the one frame `_crop_image` returned."""
+    cut and the remap use the one saved crop file, whose rotated frame
+    `_RotatedCrop.saved_at` reads back from the file it wrote."""
     page = tmp_path / "page.png"
     Image.new("RGB", (200, 100), "white").save(page)
     full_rotated_frame = json.dumps({"lines": [{"text": "the postcard's message", "box": [0, 0, 1000, 1000]}]})

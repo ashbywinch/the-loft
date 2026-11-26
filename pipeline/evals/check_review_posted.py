@@ -270,6 +270,7 @@ class _Comment:
     created_at: str
     updated_at: str = ""
     user_type: str = "Bot"
+    commit_id: str = ""  # an inline finding names the commit it was made against
 
     @classmethod
     def from_json(cls, node: "Mapping[str, Any]") -> "_Comment":
@@ -279,6 +280,7 @@ class _Comment:
             node.get("created_at") or "",
             node.get("updated_at") or "",
             (node.get("user") or {}).get("type", ""),
+            node.get("original_commit_id") or node.get("commit_id") or "",
         )
 
 
@@ -393,10 +395,57 @@ def _a_finding_posted(inline: list[_Comment], run_started: str) -> bool:
     return any(_from_a_machine(c.user_type) and c.created_at >= run_started for c in inline)
 
 
+def _reviewed_since_unchanged(api: Callable[[str], Any], reviewed: list[str], head: str) -> str | None:
+    """The reviewed commit whose review still covers this head, if any.
+
+    Exists for the merge of a base branch: it changes none of the PR's files, so
+    the reviewer returns without publishing anything (no guide, no findings, no
+    log line) and a gate that only ever asks "did a review post for this head"
+    calls that unreviewed. If the tree has not moved since a commit that WAS
+    reviewed, that review still covers it — and the comparison is of files, not
+    of commit ids, so a rebase of identical content also holds.
+    """
+    for reviewed_sha in reviewed:
+        if not reviewed_sha or reviewed_sha == head:
+            continue
+        try:
+            compared = api(f"compare/{reviewed_sha}...{head}")
+        except _ApiError:
+            continue
+        if not compared.get("files"):
+            return reviewed_sha
+    return None
+
+
 def _review_covers(comments: list[_Comment], sha: str, run_started: str) -> bool:
     """Does any comment cover the head commit? Three forms count, one property each:
     a human skip, a guide for this head, or the bot's empty-increment skip."""
     return any(_Coverage(comment, run_started).covers(sha) for comment in comments)
+
+
+def _coverage_notice(
+    comments: list[_Comment],
+    inline: list[_Comment],
+    sha: str,
+    run_started: str,
+    api: Callable[[str], Any],
+) -> str | None:
+    """What covers this head, if anything: None when nothing does.
+
+    The three comment forms, the findings this run posted inline, or a review of
+    a commit the head has not changed away from. The string is the sentence to
+    print — empty for a plain cover, a reason for the unchanged case.
+    """
+    if _review_covers(comments, sha, run_started) or _a_finding_posted(inline, run_started):
+        return ""
+    reviewed = [c.commit_id for c in inline if c.commit_id and _from_a_machine(c.user_type)]
+    unchanged = _reviewed_since_unchanged(api, reviewed, sha)
+    if unchanged:
+        return (
+            f"no review posted for {sha} — nothing has changed since the review of "
+            f"{unchanged[:8]}, so that review covers this head."
+        )
+    return None
 
 
 def main() -> int:
@@ -446,32 +495,35 @@ def main() -> int:
     except _ApiError as e:
         print(f"::error::PR comments are not fetchable ({e}) — the review coverage cannot be checked.")
         return 1
-    if not _review_covers(comments, sha, reviewed_after) and not _a_finding_posted(inline, reviewed_after):
-        try:
-            log = gate.job_log()
-        except (_ApiError, _NoLogError, KeyError, URLError) as e:
-            print(
-                f"::error::AI review did not post for commit {sha} — the job log could not be "
-                f"read ({type(e).__name__}: {e}), so the reason is unknown."
-            )
-            return 1
-        log_read = _BotLog(log)
-        if log_read.nothing_to_publish:
-            print(
-                f"::notice::no review posted for {sha} — the reviewer examined the increment and "
-                "found nothing to publish. A clean review, not a failure."
-            )
-            return 0
-        if log_read.skipped:
-            print(
-                f"::notice::no review posted for {sha} — the reviewer found nothing it can "
-                "analyse in this PR. A clean skip, not a failure."
-            )
-            return 0
-        reason = log_read.reason
-        print(f"::error::AI review did not post for commit {sha} — {reason}.")
+    notice = _coverage_notice(comments, inline, sha, reviewed_after, gate.api)
+    if notice is not None:
+        if notice:
+            print(f"::notice::{notice}")
+        return 0
+    try:
+        log = gate.job_log()
+    except (_ApiError, _NoLogError, KeyError, URLError) as e:
+        print(
+            f"::error::AI review did not post for commit {sha} — the job log could not be "
+            f"read ({type(e).__name__}: {e}), so the reason is unknown."
+        )
         return 1
-    return 0
+    log_read = _BotLog(log)
+    if log_read.nothing_to_publish:
+        print(
+            f"::notice::no review posted for {sha} — the reviewer examined the increment and "
+            "found nothing to publish. A clean review, not a failure."
+        )
+        return 0
+    if log_read.skipped:
+        print(
+            f"::notice::no review posted for {sha} — the reviewer found nothing it can "
+            "analyse in this PR. A clean skip, not a failure."
+        )
+        return 0
+    reason = log_read.reason
+    print(f"::error::AI review did not post for commit {sha} — {reason}.")
+    return 1
 
 
 if __name__ == "__main__":

@@ -82,6 +82,39 @@ def test_an_inline_comment_from_a_person_does_not_cover() -> None:
     assert not gate._a_finding_posted(inline, _RUN_STARTED)
 
 
+class _Compared:
+    """A gate whose compare answers with a fixed file list."""
+
+    def __init__(self, files: list[dict[str, str]] | None = None) -> None:
+        self.files = files if files is not None else []
+        self.paths: list[str] = []
+
+    def api(self, path: str):
+        self.paths.append(path)
+        return {"files": self.files}
+
+
+def test_a_head_that_changed_no_files_is_covered_by_the_review_before_it() -> None:
+    """A merge of the base branch changes none of the PR's files; the reviewer
+    publishes nothing, and the review before it still speaks for this head."""
+    gate_stub = _Compared()
+    assert gate._reviewed_since_unchanged(gate_stub.api, ["a" * 40], "b" * 40) == "a" * 40
+    assert gate_stub.paths == [f"compare/{'a' * 40}...{'b' * 40}"]
+
+
+def test_a_head_with_changed_files_is_not_covered_by_an_earlier_review() -> None:
+    gate_stub = _Compared([{"filename": "pipeline/evals/eval_crop_grid.py"}])
+    assert gate._reviewed_since_unchanged(gate_stub.api, ["a" * 40], "b" * 40) is None
+
+
+def test_the_head_never_covers_itself_by_comparison() -> None:
+    """Asking a commit to be its own ancestor would compare nothing and pass
+    every head; the comparison is only ever against a different commit."""
+    gate_stub = _Compared()
+    assert gate._reviewed_since_unchanged(gate_stub.api, ["a" * 40], "a" * 40) is None
+    assert gate_stub.paths == []
+
+
 def test_a_review_that_found_nothing_to_publish_is_a_verdict() -> None:
     """pr-agent logs this when the increment was examined and came back clean."""
     log = '{"text":"Review output is not published: no major issues detected."}\n'

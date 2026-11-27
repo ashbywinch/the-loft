@@ -1,14 +1,14 @@
 #!/bin/bash
 # Commit through the formatter, and prove the commit landed.
 #
-# Two failures this exists for, both measured on 2026-11-26/27:
+# The hooks reformat the whole Python tree, so a commit that stages first is
+# refused after the formatter rewrote it — and a refused commit leaves HEAD
+# where it was, so the next push sends the old head. Formatting first leaves the
+# hooks nothing to fix.
 #
-#   1. a pre-commit hook reformats a staged file, the commit is refused, and the
-#      next command runs against the OLD head — so a push sends a branch whose
-#      head is still main. `make format` first leaves the hook nothing to fix;
-#   2. `git commit … | tail -1` reports the plumbing's exit status, not the
-#      commit's, so a refusal reads as success. The subject is read back from
-#      HEAD afterwards, and a mismatch is an error.
+# A pipeline's exit status is its last stage's, so a caller cannot tell a
+# refused commit from a made one; this ends by reading the subject back from
+# HEAD and fails when they differ.
 #
 # Usage: scripts/commit.sh "<subject>" ["<body file>"]
 set -euo pipefail

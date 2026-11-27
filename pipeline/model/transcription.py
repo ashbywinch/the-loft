@@ -14,6 +14,15 @@ from typing import Any
 
 
 @dataclass(frozen=True)
+class TranscribedLine:
+    """One line of a transcription: its text and the box the model measured for
+    it, in the response's NORMALIZED 0-1000 units."""
+
+    text: str
+    box: list[float]
+
+
+@dataclass(frozen=True)
 class Transcription:
     """What one vision call read: the transcription text (the .txt content,
     the lines joined with newlines) and the per-line boxes keyed by the line
@@ -32,6 +41,17 @@ class Transcription:
     text: str
     boxes: dict[int, list[float]] | None = None
 
+    def boxed_lines(self) -> list[TranscribedLine]:
+        """This reading's lines as text/box pairs, in reading order. The pairing
+        is this class's own invariant: ``from_lines`` builds ``text`` by joining
+        one entry per line and keys each box by that entry's position, so every
+        key is a valid index into ``text``'s split — a caller reads the pairs
+        instead of splitting the text itself, and computes no index that could
+        point past the text it indexes. A line the model measured no usable box
+        for is absent: its geometry is only the lines it measured."""
+        parts = self.text.split("\n")
+        return [TranscribedLine(parts[index], box) for index, box in sorted((self.boxes or {}).items())]
+
     @classmethod
     def from_payload(cls, data: Any, fallback: str) -> Transcription:
         """The reading one parsed model answer holds: the JSON format the
@@ -49,7 +69,10 @@ class Transcription:
         """The transcription from the model's "lines" array — blank lines
         carry no box (the .txt's own split skips them too, so the indexes
         stay aligned). None when an entry is not a usable object — the
-        caller falls back to the plain-text form."""
+        caller falls back to the plain-text form. A box is kept only when it
+        encloses area (``x1 > x0`` and ``y1 > y0``): a zero-width or reversed
+        box is not a measurement, and a bare height would read as vertical
+        text downstream."""
         texts: list[str] = []
         boxes: dict[int, list[float]] = {}
         for entry in entries:
@@ -65,6 +88,10 @@ class Transcription:
                 isinstance(box, list)
                 and len(box) == Transcription._BOX_COORDINATE_COUNT
                 and all(isinstance(v, (int, float)) and v == v for v in box)
+                # a box with no area measured nothing: it would otherwise make
+                # a width-0 line read as "taller than wide" (vertical text)
+                and box[2] > box[0]
+                and box[3] > box[1]
             ):
                 boxes[index] = [float(v) for v in box]
         return cls("\n".join(texts), _drop_degenerate_boxes(boxes) or None)

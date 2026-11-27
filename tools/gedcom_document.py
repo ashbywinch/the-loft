@@ -172,8 +172,8 @@ class _FamilyUnits:
     through 'archive' are this class's machinery."""
 
     def __init__(self, edges: tuple[GedcomEdge, ...], archive: Archive | None) -> None:
-        self._edges = edges
-        self._archive = archive
+        self._edges: tuple[GedcomEdge, ...] = edges
+        self._archive: Archive | None = archive
         self._pairs: set[tuple[str, str]] = set()
         self._marriage_dates: dict[tuple[str, str], GedcomDate] = {}
         self._pair_notes: dict[tuple[str, str], list[str]] = {}
@@ -184,7 +184,7 @@ class _FamilyUnits:
         self._estimated_parent_edges: set[tuple[str, str]] = set()
         self._children_of: dict[str, list[str]] = {}
         self._single_parent: dict[str, list[str]] = {}
-        self._counter = 0
+        self._counter: int = 0
 
     def build(self) -> tuple[GedcomFamily, ...]:
         """The FAM records: spouse pairs + their children, then single-parent
@@ -527,9 +527,9 @@ class GedcomDocument:
     """
 
     def __init__(self, shapes: GedcomShapes, *, archive: Archive | None = None) -> None:
-        self._shapes = shapes
+        self._shapes: GedcomShapes = shapes
         self._records: list[Any] = []  # the parsed GEDCOM state (shape-built documents carry none)
-        self._archive = archive  # the archive-only note sources (stories, estimate evidence)
+        self._archive: Archive | None = archive  # the archive-only note sources (stories, estimate evidence)
 
     @classmethod
     def from_text(cls, text: str) -> GedcomDocument:

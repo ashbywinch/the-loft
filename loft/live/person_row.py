@@ -93,7 +93,7 @@ class PersonProjection:
     delete — the items' and pages' projection shape."""
 
     def __init__(self, connection: sqlite3.Connection) -> None:
-        self.connection = connection
+        self.connection: sqlite3.Connection = connection
 
     def get(self, person_id: str) -> Person | None:
         """The person a projection row holds, or None."""

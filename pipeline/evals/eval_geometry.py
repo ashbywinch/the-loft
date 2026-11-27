@@ -479,7 +479,7 @@ class ClipLocation:
     eval's."""
 
     def __init__(self, batch_size: int) -> None:
-        self.batch_size = batch_size
+        self.batch_size: int = batch_size
 
     @staticmethod
     def __call__(fixture: Fixture) -> Layout:

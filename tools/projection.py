@@ -222,8 +222,8 @@ class _RefChecker:
     state."""
 
     def __init__(self, ids: PublishedIds, items: Mapping[str, Item]) -> None:
-        self._ids = ids
-        self._items = items
+        self._ids: PublishedIds = ids
+        self._items: Mapping[str, Item] = items
 
     def check(self, item: Item) -> None:
         """Every link a catalogued item carries must resolve in the
@@ -380,8 +380,8 @@ class Projection:
     """
 
     def __init__(self, archive: Archive, out: Path) -> None:
-        self.archive = archive
-        self.out = Path(out)
+        self.archive: Archive = archive
+        self.out: Path = Path(out)
 
     def build(self) -> None:
         """Regenerate the projection at *out* from the archive — derived, so

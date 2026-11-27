@@ -23,7 +23,7 @@ class ReviewWrites:
     """The review session write surface: one change per action."""
 
     def __init__(self, store: ItemStore) -> None:
-        self.store = store
+        self.store: ItemStore = store
 
     def session(self, session_id: str) -> Session | None:
         with self.store.lock:

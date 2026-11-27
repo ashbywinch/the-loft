@@ -46,7 +46,7 @@ class MemoryContentStore:
     """The content store's memory twin."""
 
     def __init__(self, blobs: dict[str, bytes]) -> None:
-        self.blobs = blobs
+        self.blobs: dict[str, bytes] = blobs
 
     def put(self, data: bytes, *, mime: str = "application/octet-stream") -> str:
         sha = hashlib.sha256(data).hexdigest()
@@ -68,8 +68,8 @@ class MemoryLiveStore:
     """The memory store: dicts and a list, the same facade as LiveStore."""
 
     def __init__(self, *, app_version: str = "test") -> None:
-        self.app_version = app_version
-        self._active_change = False
+        self.app_version: str = app_version
+        self._active_change: bool = False
         self._people: dict[str, Person] = {}
         self._items: dict[str, Item] = {}
         self._item_refs: dict[str, tuple[ItemRef, ...]] = {}
@@ -91,21 +91,21 @@ class MemoryLiveStore:
         self._events: list[dict[str, Any]] = []
         self._applied: set[str] = set()
         self._aliases: dict[tuple[str, str], Alias] = {}
-        self.lock = threading.RLock()
-        self.people = _MemoryPeople(self)
-        self.items = _MemoryItems(self)
-        self.reviews = _MemoryReviews(self)
-        self.batches = _MemoryBatches(self)
-        self.pages = _MemoryPages(self)
-        self.documents = _MemoryDocuments(self)
+        self.lock: threading.RLock = threading.RLock()
+        self.people: _MemoryPeople = _MemoryPeople(self)
+        self.items: _MemoryItems = _MemoryItems(self)
+        self.reviews: _MemoryReviews = _MemoryReviews(self)
+        self.batches: _MemoryBatches = _MemoryBatches(self)
+        self.pages: _MemoryPages = _MemoryPages(self)
+        self.documents: _MemoryDocuments = _MemoryDocuments(self)
         self._collections: dict[str, dict[str, object]] = {kind.name: {} for kind in (PLACE, ORG, THEME, RELATIONSHIP)}
-        self.places = _MemoryCollection(self, PLACE)
-        self.orgs = _MemoryCollection(self, ORG)
-        self.themes = _MemoryCollection(self, THEME)
-        self.relationships = _MemoryCollection(self, RELATIONSHIP)
-        self.aliases = MemoryAliases(self._aliases)
-        self.content = MemoryContentStore(self._content)
-        self.identities = Identities(self)
+        self.places: _MemoryCollection = _MemoryCollection(self, PLACE)
+        self.orgs: _MemoryCollection = _MemoryCollection(self, ORG)
+        self.themes: _MemoryCollection = _MemoryCollection(self, THEME)
+        self.relationships: _MemoryCollection = _MemoryCollection(self, RELATIONSHIP)
+        self.aliases: MemoryAliases = MemoryAliases(self._aliases)
+        self.content: MemoryContentStore = MemoryContentStore(self._content)
+        self.identities: Identities = Identities(self)
 
     def change(self, *, actor: str, note: str = "", command_id: str | None = None) -> _MemoryChange:
         return _MemoryChange(self, actor=actor, note=note, command_id=command_id, lock=self.lock)
@@ -288,8 +288,8 @@ class _MemoryPeople:
     """The memory collection: read through the store, write through a change."""
 
     def __init__(self, store: MemoryLiveStore, change: _MemoryChange | None = None) -> None:
-        self.store = store
-        self.change = change
+        self.store: MemoryLiveStore = store
+        self.change: _MemoryChange | None = change
 
     def get(self, person_id: str) -> Person | None:
         return self.store._people.get(person_id)
@@ -448,8 +448,8 @@ class _MemoryItems:
     """The item collection in memory, with the same aggregate and write rules."""
 
     def __init__(self, store: MemoryLiveStore, change: _MemoryChange | None = None) -> None:
-        self.store = store
-        self.change = change
+        self.store: MemoryLiveStore = store
+        self.change: _MemoryChange | None = change
 
     def get(self, item_id: str) -> Item | None:
         return self.store._items.get(item_id)
@@ -551,8 +551,8 @@ class _MemoryReviews:
     """The review sessions in memory, with the same rows and write rules."""
 
     def __init__(self, store: MemoryLiveStore, change: _MemoryChange | None = None) -> None:
-        self.store = store
-        self.change = change
+        self.store: MemoryLiveStore = store
+        self.change: _MemoryChange | None = change
 
     def get(self, session_id: str) -> ReviewSessionRow | None:
         return self.store._review_sessions.get(session_id)
@@ -632,8 +632,8 @@ class _MemoryBatches:
     """The batch collection in memory, with the same rows and write rules."""
 
     def __init__(self, store: MemoryLiveStore, change: _MemoryChange | None = None) -> None:
-        self.store = store
-        self.change = change
+        self.store: MemoryLiveStore = store
+        self.change: _MemoryChange | None = change
 
     def get(self, batch_id: str) -> BatchState | None:
         return self.store._batches.get(batch_id)
@@ -689,8 +689,8 @@ class _MemoryPages:
     """The page collection in memory, with the same aggregate and write rules."""
 
     def __init__(self, store: MemoryLiveStore, change: _MemoryChange | None = None) -> None:
-        self.store = store
-        self.change = change
+        self.store: MemoryLiveStore = store
+        self.change: _MemoryChange | None = change
 
     def get(self, page_id: str) -> PageState | None:
         return self.store._pages.get(page_id)
@@ -811,8 +811,8 @@ class _MemoryDocuments:
     """The document collection in memory, with the same rows and write rules."""
 
     def __init__(self, store: MemoryLiveStore, change: _MemoryChange | None = None) -> None:
-        self.store = store
-        self.change = change
+        self.store: MemoryLiveStore = store
+        self.change: _MemoryChange | None = change
 
     def get(self, document_id: str) -> DocumentState | None:
         return self.store._documents.get(document_id)
@@ -882,7 +882,13 @@ class _MemoryDocuments:
         return saved
 
 
+# lucidlint: ignore duplicate-field _MemoryChange is Change's in-memory twin — the DI double of LiveStore
 class _MemoryChange:
+    """The memory store's Change: the same transaction facade over dicts that
+    `Change` is over SQLite (`loft/live/change.py`), so the two member sets
+    mirror by design — the change owns one transaction's view, the store the
+    data."""
+
     def __init__(
         self,
         store: MemoryLiveStore,
@@ -892,23 +898,23 @@ class _MemoryChange:
         command_id: str | None,
         lock: threading.RLock | None = None,
     ) -> None:
-        self.store = store
-        self.actor = actor
-        self.note = note
-        self.command_id = command_id
-        self.lock = lock if lock is not None else threading.RLock()
-        self.change_id = uuid.uuid4().hex
-        self.content = store.content
-        self.items = _MemoryItems(store, change=self)
-        self.reviews = _MemoryReviews(store, change=self)
-        self.batches = _MemoryBatches(store, change=self)
-        self.pages = _MemoryPages(store, change=self)
-        self.documents = _MemoryDocuments(store, change=self)
-        self.people = _MemoryPeople(store, change=self)
-        self.places = _MemoryCollection(store, PLACE, change=self)
-        self.orgs = _MemoryCollection(store, ORG, change=self)
-        self.themes = _MemoryCollection(store, THEME, change=self)
-        self.relationships = _MemoryCollection(store, RELATIONSHIP, change=self)
+        self.store: MemoryLiveStore = store
+        self.actor: str = actor
+        self.note: str = note
+        self.command_id: str | None = command_id
+        self.lock: threading.RLock = lock if lock is not None else threading.RLock()
+        self.change_id: str = uuid.uuid4().hex
+        self.content: MemoryContentStore = store.content
+        self.items: _MemoryItems = _MemoryItems(store, change=self)
+        self.reviews: _MemoryReviews = _MemoryReviews(store, change=self)
+        self.batches: _MemoryBatches = _MemoryBatches(store, change=self)
+        self.pages: _MemoryPages = _MemoryPages(store, change=self)
+        self.documents: _MemoryDocuments = _MemoryDocuments(store, change=self)
+        self.people: _MemoryPeople = _MemoryPeople(store, change=self)
+        self.places: _MemoryCollection = _MemoryCollection(store, PLACE, change=self)
+        self.orgs: _MemoryCollection = _MemoryCollection(store, ORG, change=self)
+        self.themes: _MemoryCollection = _MemoryCollection(store, THEME, change=self)
+        self.relationships: _MemoryCollection = _MemoryCollection(store, RELATIONSHIP, change=self)
         self._people: dict[str, Person] | None = None
         self._items: dict[str, Item] | None = None
         self._item_refs: dict[str, tuple[ItemRef, ...]] | None = None
@@ -1082,9 +1088,9 @@ class _MemoryCollection:
     """One identity collection in memory, with the same write rules."""
 
     def __init__(self, store: MemoryLiveStore, kind: Kind, change: _MemoryChange | None = None) -> None:
-        self.store = store
-        self.kind = kind
-        self.change = change
+        self.store: MemoryLiveStore = store
+        self.kind: Kind = kind
+        self.change: _MemoryChange | None = change
 
     @property
     def records(self) -> dict[str, object]:

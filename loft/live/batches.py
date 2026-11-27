@@ -24,8 +24,8 @@ class Batches:
     """The batch collection: read through the store, write through a change."""
 
     def __init__(self, connection: sqlite3.Connection, change: Change | None = None) -> None:
-        self.projection = BatchProjection(connection)
-        self.change = change
+        self.projection: BatchProjection = BatchProjection(connection)
+        self.change: Change | None = change
 
     # -- reads -------------------------------------------------------------
 

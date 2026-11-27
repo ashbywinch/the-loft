@@ -187,8 +187,8 @@ class _WorkCommand:
     batch, watch, or one sweep — the paths and the worker travel together."""
 
     def __init__(self, paths: LoftPaths, worker: Worker) -> None:
-        self.paths = paths
-        self.worker = worker
+        self.paths: LoftPaths = paths
+        self.worker: Worker = worker
 
     def requeue(self, batch_id: str) -> int:
         try:

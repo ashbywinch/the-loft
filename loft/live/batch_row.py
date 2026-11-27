@@ -119,7 +119,7 @@ class BatchProjection:
     """One connection's batch rows: the reader and the guarded writer."""
 
     def __init__(self, connection: sqlite3.Connection) -> None:
-        self.connection = connection
+        self.connection: sqlite3.Connection = connection
 
     def current_version(self, batch_id: str) -> int | None:
         row = self.connection.execute("SELECT version FROM batches WHERE batch_id = ?", (batch_id,)).fetchone()

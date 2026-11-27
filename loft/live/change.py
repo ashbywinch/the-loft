@@ -53,26 +53,26 @@ class Change:
         note: str = "",
         command_id: str | None = None,
     ) -> None:
-        self.connection = context.connection
-        self.lock = context.lock
-        self.actor = actor
-        self.app_version = app_version
-        self.note = note
-        self.command_id = command_id
-        self.change_id = uuid.uuid4().hex
+        self.connection: sqlite3.Connection = context.connection
+        self.lock: threading.RLock = context.lock
+        self.actor: str = actor
+        self.app_version: str = app_version
+        self.note: str = note
+        self.command_id: str | None = command_id
+        self.change_id: str = uuid.uuid4().hex
         connection = context.connection
-        self.content = ContentStore(connection)
-        self.items = Items(connection, self.content, change=self)
-        self.reviews = Reviews(connection, self.content, change=self)
-        self.batches = Batches(connection, change=self)
-        self.pages = Pages(connection, self.content, change=self)
-        self.documents = Documents(connection, change=self)
-        self.people = People(connection, change=self)
-        self.places = Collection(connection, PLACE, change=self)
-        self.orgs = Collection(connection, ORG, change=self)
-        self.themes = Collection(connection, THEME, change=self)
-        self.relationships = Collection(connection, RELATIONSHIP, change=self)
-        self._entered = False
+        self.content: ContentStore = ContentStore(connection)
+        self.items: Items = Items(connection, self.content, change=self)
+        self.reviews: Reviews = Reviews(connection, self.content, change=self)
+        self.batches: Batches = Batches(connection, change=self)
+        self.pages: Pages = Pages(connection, self.content, change=self)
+        self.documents: Documents = Documents(connection, change=self)
+        self.people: People = People(connection, change=self)
+        self.places: Collection = Collection(connection, PLACE, change=self)
+        self.orgs: Collection = Collection(connection, ORG, change=self)
+        self.themes: Collection = Collection(connection, THEME, change=self)
+        self.relationships: Collection = Collection(connection, RELATIONSHIP, change=self)
+        self._entered: bool = False
 
     def __enter__(self) -> Self:
         if self._entered:

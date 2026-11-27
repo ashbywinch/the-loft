@@ -105,7 +105,7 @@ class DocumentProjection:
     """One connection's document rows: the reader and the guarded writer."""
 
     def __init__(self, connection: sqlite3.Connection) -> None:
-        self.connection = connection
+        self.connection: sqlite3.Connection = connection
 
     def current_version(self, document_id: str) -> int | None:
         row = self.connection.execute("SELECT version FROM documents WHERE document_id = ?", (document_id,)).fetchone()

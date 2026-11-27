@@ -1323,9 +1323,9 @@ class Server:
         host: str = "127.0.0.1",
         port: int = 8124,
     ) -> None:
-        self.config = config
-        self.host = host
-        self.port = port
+        self.config: ServerConfig = config
+        self.host: str = host
+        self.port: int = port
 
     def lan_urls(self) -> list[str]:
         """Every non-loopback address this machine answers on, as http

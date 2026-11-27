@@ -138,10 +138,10 @@ class WorkPage:
     """One page's work-tree files: its reading, words, orientation, correction."""
 
     def __init__(self, work_dir: Path, batch_id: str, page: str) -> None:
-        self.work_dir = work_dir
-        self.batch_id = batch_id
-        self.page = page
-        self.store = PipelineStore(work_dir)
+        self.work_dir: Path = work_dir
+        self.batch_id: str = batch_id
+        self.page: str = page
+        self.store: PipelineStore = PipelineStore(work_dir)
 
     def reading(self) -> dict[str, Any] | None:
         stem = Path(self.page).stem

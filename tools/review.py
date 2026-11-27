@@ -155,7 +155,7 @@ class _ReviewTools:
     _TOOLS = ("search_people", "person", "relationships", "attested", "search_items")
 
     def __init__(self, facts: ReviewContext) -> None:
-        self._facts = facts
+        self._facts: ReviewContext = facts
 
     def run(self, tool: str, args: ToolArgs | None) -> ToolResult:
         """One tool call — the tool's own method with its own argument

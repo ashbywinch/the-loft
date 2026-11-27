@@ -18,7 +18,7 @@ class ContentStore:
     """One connection's view of the `content` table."""
 
     def __init__(self, connection: sqlite3.Connection) -> None:
-        self.connection = connection
+        self.connection: sqlite3.Connection = connection
 
     def put(self, data: bytes, *, mime: str = "application/octet-stream") -> str:
         """Store the bytes and return their sha; an existing sha is verified."""

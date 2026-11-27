@@ -27,7 +27,7 @@ class Aliases:
     """The alias projection's read side (the write lives in the merge verb)."""
 
     def __init__(self, connection: sqlite3.Connection) -> None:
-        self.connection = connection
+        self.connection: sqlite3.Connection = connection
 
     def all(self) -> tuple[Alias, ...]:
         rows = self.connection.execute("SELECT * FROM aliases ORDER BY loser_kind, loser_id").fetchall()
@@ -77,7 +77,7 @@ class MemoryAliases:
     """The memory store's alias projection — the same surface, one dict."""
 
     def __init__(self, entries: dict[tuple[str, str], Alias]) -> None:
-        self.entries = entries
+        self.entries: dict[tuple[str, str], Alias] = entries
 
     def all(self) -> tuple[Alias, ...]:
         return tuple(self.entries[key] for key in sorted(self.entries))

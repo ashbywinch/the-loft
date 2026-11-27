@@ -275,8 +275,8 @@ class ReviewRun:
     unaware they share the run; each checks one condition)."""
 
     def __init__(self, flow: ReviewFlow, result: ReviewVerdict) -> None:
-        self.flow = flow
-        self.result = result
+        self.flow: ReviewFlow = flow
+        self.result: ReviewVerdict = result
 
     def verdict(self) -> str:
         """The whole verdict, for a failure message.

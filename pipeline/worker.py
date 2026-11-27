@@ -111,15 +111,17 @@ class Worker:
         reconciler: Reconciler | None = None,
         printed: Callable[[Path], Any] | None = None,
     ) -> None:
-        self.paths = paths
-        self.client = client
-        self.write_line = write_line
-        self._stale_after = self.stale_after_seconds if stale_after is None else stale_after
-        self._now = now or (lambda: datetime.now(UTC))
-        self._host = socket.gethostname()
+        self.paths: LoftPaths = paths
+        self.client: Callable[[str, str], str] | None = client
+        self.write_line: Callable[[str], None] = write_line
+        self._stale_after: float = self.stale_after_seconds if stale_after is None else stale_after
+        self._now: Callable[[], datetime] = now or (lambda: datetime.now(UTC))
+        self._host: str = socket.gethostname()
         # the seam, as a parameter: the reconciler plans and runs one batch;
         # this worker owns the batch list, the live-pass rule and the triggers
-        self.reconciler = reconciler or Reconciler(paths, write_line=write_line, client=client, printed=printed)
+        self.reconciler: Reconciler = reconciler or Reconciler(
+            paths, write_line=write_line, client=client, printed=printed
+        )
         self._inflight: set[str] = set()
 
     def sweep(self) -> SweepReport:

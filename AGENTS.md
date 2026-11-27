@@ -107,6 +107,10 @@ default. Real content never lives in code (`docs/coding-standards.md`).
   formatter modified files), re-stage the modified files, verify the staged
   diff matches your intent, and re-commit with the hook.
 - Atomic commits; reference issues with `Fixes #N`.
+- **Never report a state change from a piped command**: `git commit -q -m
+  "<subject>"`, then read `git log -1 --format=%s` back. `scripts/commit.sh
+  "<subject>"` formats, commits and does the read-back; the rule is
+  `skill://pr-workflow` § 1c.
 - Archive data is NEVER committed: the `archive/` directory is gitignored
   and data-free in the repo; the real family content lives on the
   workspace volume and is regularly backed up. The archive's durability

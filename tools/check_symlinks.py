@@ -49,11 +49,44 @@ def staged_symlinks() -> list[tuple[str, str]]:
     return links
 
 
+def _blob_texts(shas: list[str]) -> dict[str, str]:
+    """The contents of several blobs in one call, keyed by sha.
+
+    ``git cat-file --batch`` answers ``<sha> <type> <size>``, then the object's
+    bytes, then a newline — so the size is the only thing needed to walk it.
+    """
+    if not shas:
+        return {}
+    out = subprocess.run(
+        ["git", "cat-file", "--batch"],
+        input="\n".join(shas) + "\n",
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    texts: dict[str, str] = {}
+    cursor = 0
+    while cursor < len(out):
+        header_end = out.find("\n", cursor)
+        if header_end == -1:
+            break
+        fields = out[cursor:header_end].split()
+        cursor = header_end + 1
+        if len(fields) < 3:  # "<sha> missing" — nothing to read
+            continue
+        sha, size = fields[0], int(fields[2])
+        texts[sha] = out[cursor : cursor + size]
+        cursor += size + 1
+    return texts
+
+
 def absolute_links() -> list[AbsoluteLink]:
     """The staged symlinks whose target is absolute — the ones that cannot travel."""
+    links = staged_symlinks()
+    targets = _blob_texts([sha for _, sha in links])
     offenders: list[AbsoluteLink] = []
-    for path, sha in staged_symlinks():
-        target = subprocess.run(["git", "cat-file", "blob", sha], capture_output=True, text=True, check=True).stdout
+    for path, sha in links:
+        target = targets.get(sha, "")
         if target.startswith("/") or (len(target) > 1 and target[1] == ":"):
             offenders.append(AbsoluteLink(path, target))
     return offenders

@@ -105,10 +105,9 @@ skip_commands = ["/skip"]
 
 
 [github]
-# Publish a FULL (non-incremental) review as a completed "PR Agent - Review"
-# check run on the head SHA. The gate no longer reads it: coverage is the
-# review comment (see [pr_reviewer]), and an incremental push review publishes
-# none. Keep it for a deliberate full `/review` run, where the check run is the
-# visible artifact; the review text caps at 65,535 characters and the tail is
-# dropped on a review that large.
-publish_as_check_run = true
+# A review is published as the "PR Reviewer Guide" comment, never as a check
+# run. The check run replaces the comment rather than joining it, so with it on
+# a full review — which is what a force-push or a first review produces, since
+# there is no previous review to increment from — leaves no comment for the
+# coverage gate to read.
+publish_as_check_run = false

@@ -54,7 +54,7 @@ from pipeline.api.confirmation_request import ConfirmationRequest
 from pipeline.api.delete_request import DeleteRequest
 from pipeline.api.device_poll_request import DevicePollRequest
 from pipeline.api.error_answer import ErrorAnswer
-from pipeline.api.family import family_members
+from pipeline.api.family import family_members, malformed_members
 from pipeline.api.health_answer import HealthAnswer
 from pipeline.api.identify_answer import IdentifyAnswer
 from pipeline.api.identify_decide_answer import IdentifyDecideAnswer, receipt
@@ -718,6 +718,16 @@ def build_app(
             "family: THE_LOFT_FAMILY_MEMBERS is empty — nobody can read the archive "
             "until it names the family's Google accounts"
         )
+    else:
+        malformed = malformed_members()
+        if malformed:
+            logger.warning(
+                "family: %d entr%s in THE_LOFT_FAMILY_MEMBERS cannot be an email address (%s) — "
+                "those accounts are refused until the list is corrected",
+                len(malformed),
+                "y" if len(malformed) == 1 else "ies",
+                ", ".join(malformed),
+            )
 
     @app.middleware("http")
     async def log_shell_request(request: Request, call_next: Any) -> Any:

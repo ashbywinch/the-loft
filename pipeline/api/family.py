@@ -29,6 +29,25 @@ def family_members(_env: Mapping[str, str] | None = None) -> frozenset[str]:
     return frozenset(email.strip().casefold() for email in listed if email.strip())
 
 
+def malformed_members(_env: Mapping[str, str] | None = None) -> tuple[str, ...]:
+    """The configured entries that cannot be an email address, as written.
+
+    A typo in the list is a misconfiguration, not a datum: the entry looks like
+    an exclusion, and the account it was meant to name is refused with no other
+    trace. The server says so once at startup, where the operator is looking.
+    An entry is accepted when it has one ``@`` with something either side — the
+    same bar the address must clear to be matched at all.
+    """
+    env = os.environ if _env is None else _env
+    entries = [entry.strip() for entry in env.get("THE_LOFT_FAMILY_MEMBERS", "").split(",")]
+    return tuple(entry for entry in entries if entry and not _looks_like_an_address(entry))
+
+
+def _looks_like_an_address(entry: str) -> bool:
+    local, at, domain = entry.partition("@")
+    return bool(local and at and domain and "@" not in domain)
+
+
 def is_family(user: SessionUser | None, members: frozenset[str] | None = None) -> bool:
     """Whether the signed-in account is one of the family. No session is
     never family — the routes answer their own 401 for that, with the message

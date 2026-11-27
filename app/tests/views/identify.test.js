@@ -58,7 +58,11 @@ afterEach(async () => {
 const tick = () => vi.advanceTimersByTimeAsync(0);
 // each test gets its own copy: the view mutates the loaded state (a decision
 // updates the mention), so a shared fixture would leak decisions forward
-const freshState = () => copy(STATE);
+const freshState = () => {
+  const state = copy(STATE); // JSON drops the Map, as the loader would not
+  state.byId = new Map(state.items.map((item) => [item.id, item]));
+  return state;
+};
 const copy = (value) => JSON.parse(JSON.stringify(value));
 const buttons = (main) => [...main.querySelectorAll(".identify-entity .btn, .identify-entity .btn-primary")];
 const button = (main, label) => buttons(main).find((node) => node.textContent === label);
@@ -108,6 +112,19 @@ function stubFetch({ identified = IDENTIFIED_ITEM, places = [SEASCALE] } = {}) {
 }
 
 describe("the identification review — one document's people and places", () => {
+  it("keeps the item map in step, so the page shows the identified mentions", async () => {
+    // the item page reads state.byId; a pass that updated only the list left
+    // it showing the pre-identify mentions until a reload
+    stubFetch();
+    const state = freshState();
+    render(document.createElement("main"), { arg: "doc-1971-05-01" }, state);
+    await tick();
+
+    const stored = state.byId.get("doc-1971-05-01");
+    expect(stored.identified).toBe(true);
+    expect(stored.places).toEqual([{ id: "pl-mallowfield", status: "proposed" }]);
+  });
+
   it("reads the document once and lists its entities with their evidence", async () => {
     stubFetch();
     const main = document.createElement("main");

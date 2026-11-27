@@ -7,7 +7,7 @@ describe("places fallback map", () => {
     { id: "b", name: "B", x: 30, y: 40 },
   ];
 
-  it("renders one pin per place and a route", () => {
+  it("renders one pin per place", () => {
     const svg = buildFallbackMap(
       places,
       new Map([
@@ -17,7 +17,6 @@ describe("places fallback map", () => {
     );
     expect(svg instanceof SVGElement).toBe(true);
     expect(svg.querySelectorAll("circle.map-pin").length).toBe(2);
-    expect(svg.querySelector("path.map-route")).toBeTruthy();
   });
 
   it("wraps active places in links", () => {
@@ -46,14 +45,13 @@ describe("places fallback map", () => {
     expect(radii[0]).toBeGreaterThan(radii[1]);
   });
 
-  it("starts the route path with M even when the first route place is missing", () => {
-    // Only the second ROUTE place exists — a naive join would emit ' L…' and
-    // silently drop the whole path (invalid SVG data).
-    const partial = [{ id: "pl-farndale-wharf", name: "Iron Wharf", x: 55, y: 58 }];
-    const svg = buildFallbackMap(partial, new Map([["pl-farndale-wharf", 2]]));
-    const d = svg.querySelector("path.map-route").getAttribute("d");
-    expect(d.startsWith("M")).toBe(true);
-    expect(d).not.toContain("L");
+  it("draws only the places the archive holds — never a route from a constant", () => {
+    // the map once joined three place ids written into the view; the archive
+    // does not hold them, so the line never drew. Geography is archive
+    // content: the dots are the places the projection handed over.
+    const svg = buildFallbackMap([{ id: "pl-mallowfield", name: "Mallowfield", x: 55, y: 58 }], new Map([["pl-mallowfield", 2]]));
+    expect(svg.querySelector("path")).toBeNull();
+    expect([...svg.querySelectorAll("circle.map-pin")]).toHaveLength(1);
   });
 
   it("skips places without a position — no translate(null) dot, no crash", () => {

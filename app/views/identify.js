@@ -115,6 +115,10 @@ function mergeAnswer(state, body) {
     const index = (state.items ?? []).findIndex((item) => item.id === body.item.id);
     if (index >= 0) state.items[index] = body.item;
     else state.items = [...(state.items ?? []), body.item];
+    // the list and the map are two views of one collection: the item page
+    // reads `byId`, so updating the list alone shows the pre-identify
+    // mentions until a reload
+    state.byId.set(body.item.id, body.item);
   }
   mergeRecords(state, "people", body?.people);
   mergeRecords(state, "places", body?.places);

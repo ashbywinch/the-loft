@@ -18,7 +18,6 @@ import {
 import { yearOf } from "../date.js";
 import { catalogued, published } from "../data.js";
 
-const ROUTE = ["pl-aldgate", "pl-farndale-wharf", "pl-tynefield"];
 const WINDOW = 2; // ± years around the slider
 const UK_VIEW = { lat: 53.0, lng: -1.2, zoom: 5 };
 const OSM_ATTR = "&copy; OpenStreetMap contributors";
@@ -93,15 +92,6 @@ export function buildFallbackMap(places, counts, windowParams = "") {
   // coordinates, and `translate(null, null)` is invalid SVG that would kill
   // the whole door. Skip them everywhere: dots, route, labels.
   const positioned = places.filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
-  const line = el("path", {
-    class: "map-route",
-    // Filter to places that exist: a missing route place must not leave the
-    // path starting with 'L' (invalid SVG data) or a stray empty segment.
-    d: ROUTE.map((id) => positioned.find((p) => p.id === id))
-      .filter(Boolean)
-      .map((place, i) => `${i === 0 ? "M" : "L"}${place.x} ${place.y}`)
-      .join(" "),
-  });
   const dots = positioned.map((place) => {
     const count = counts.get(place.id) ?? 0;
     const scale = markerScale(place.precision);
@@ -115,7 +105,7 @@ export function buildFallbackMap(places, counts, windowParams = "") {
     ]);
     return count > 0 ? el("svg:a", { class: "map-dot-link", href: `#/place/${place.id}${windowParams}` }, [dot]) : dot;
   });
-  return el("svg", { class: "map", viewBox: "0 0 100 100", "aria-label": "Map of the family places" }, [line, ...dots]);
+  return el("svg", { class: "map", viewBox: "0 0 100 100", "aria-label": "Map of the family places" }, dots);
 }
 
 function mapSection(places, state, gridEl) {

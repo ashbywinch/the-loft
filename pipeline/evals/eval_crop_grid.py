@@ -129,6 +129,29 @@ class _RotatedCrop:
         with Image.open(rotated_path) as im:
             return cls(rotated_path, im.width, im.height)
 
+    def unrotate_box(self, box: list[float]) -> list[float]:
+        """A NORMALIZED box (0-1000), measured on this rotated crop, as pixels in
+        the crop before it was turned.
+
+        A +90° turn swaps the axes: THIS frame's height is the crop's width, and
+        its width the crop's height. So the crop's x comes from this frame's
+        height and its y from its width — swapped on purpose, which is why the
+        geometry is a method here and not a function taking two numbers a caller
+        could pass in the wrong order.
+
+        The turn maps (x, y) → (y, H − x), so the inverse is x = H − y', y = x';
+        the normalized box scales to this frame's pixels first, and the x order
+        flips because the panel's x rises as the frame's y falls.
+        """
+        crop_width, crop_height = self.pixel_height, self.pixel_width
+        x0, y0, x1, y1 = box
+        return [
+            crop_width - (y1 / 1000) * crop_width,
+            (x0 / 1000) * crop_height,
+            crop_width - (y0 / 1000) * crop_width,
+            (x1 / 1000) * crop_height,
+        ]
+
 
 @dataclass(frozen=True)
 class _Reading:
@@ -267,7 +290,7 @@ def _rotated_reading(rotated: _RotatedCrop, options: VlmOptions, upright: _Readi
             failure=ReadFailure(kind="answer", detail="the rotated read gave no usable lines"),
         )
     return _Reading(
-        lines=[TranscribedLine(line.text, remap_rotated(line.box, rotated)) for line in lines],
+        lines=[TranscribedLine(line.text, rotated.unrotate_box(line.box)) for line in lines],
         tokens=tokens,
         vertical=upright.vertical,
     )
@@ -336,30 +359,6 @@ def read_crop(
         file=sys.stderr,
     )
     return CropRead(lines=lines, tokens=reading.tokens, failure=reading.failure)
-
-
-def remap_rotated(box: list[float], frame: _RotatedCrop) -> list[float]:
-    """A NORMALIZED box (0-1000), measured on the ROTATED crop, as pixels in the
-    crop before it was turned.
-
-    A +90° turn swaps the axes: the rotated frame's HEIGHT is the crop's width,
-    and its width the crop's height. So the crop's x comes from the rotated
-    height and its y from the rotated width — swapped on purpose, which is why
-    this takes the frame as one value rather than two numbers a caller could
-    pass in the wrong order.
-
-    The turn maps (x, y) → (y, H − x), so the inverse is x = H − y', y = x'; the
-    normalized box scales to the rotated frame's pixels first, and the x order
-    flips because the panel's x rises as the rotated frame's y falls.
-    """
-    crop_width, crop_height = frame.pixel_height, frame.pixel_width
-    x0, y0, x1, y1 = box
-    return [
-        crop_width - (y1 / 1000) * crop_width,
-        (x0 / 1000) * crop_height,
-        crop_width - (y0 / 1000) * crop_width,
-        (x1 / 1000) * crop_height,
-    ]
 
 
 @dataclass(frozen=True)

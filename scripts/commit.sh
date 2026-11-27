@@ -18,10 +18,10 @@ shift
 
 cd "$(git rev-parse --show-toplevel)"
 
-format_log="$(mktemp)"
-trap 'rm -f "$format_log"' EXIT
-if ! make format >"$format_log" 2>&1; then
-    cat "$format_log" >&2
+# captured, not redirected to a file: a temporary file is one more path to
+# trust, and the output only matters when the step fails
+if ! format_output="$(make format 2>&1)"; then
+    printf '%s\n' "$format_output" >&2
     echo "make format failed — nothing was committed" >&2
     exit 1
 fi

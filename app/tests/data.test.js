@@ -26,10 +26,17 @@ describe("the private layer's refusal", () => {
     // Both must never read as "the archive is empty".
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => ({ ok: false, status: 403, json: async () => ({ error: "not on this archive's family list" }) })),
+      vi.fn(async () => ({
+        ok: false,
+        status: 403,
+        json: async () => ({ error: "not on this archive's family list" }),
+      })),
     );
     expect(await loadBootstrap()).toEqual({ signedIn: true, notAMember: true });
-    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 401, json: async () => ({}) })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: false, status: 401, json: async () => ({}) })),
+    );
     expect(await loadBootstrap()).toEqual({ signedIn: false });
   });
 });

@@ -12,6 +12,12 @@ repos:
       - id: ruff-format
   - repo: local
     hooks:
+      - id: absolute-symlinks
+        name: no staged symlink with an absolute target
+        entry: python3 tools/check_symlinks.py
+        language: system
+        pass_filenames: false  # the index is the subject, not the filenames
+        always_run: true
       - id: pyrefly
         name: pyrefly
         entry: .venv/bin/python scripts/pyrefly-lock.py check --pyrefly-config pyrefly.toml # the both-direction baseline lock — bare check fails on the 19 baselined errors (2026-09-22); NO `make` here: setup would uv-sync under pre-commit's stash and strip deps the lock needs

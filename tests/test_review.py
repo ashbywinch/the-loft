@@ -6,7 +6,7 @@ own words are recorded verbatim or nothing is).
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, override
 
 import pytest
 
@@ -82,6 +82,39 @@ VERDICT = {
     "confidence": "think_so",
     "note": "Grandma used to say so.",
 }
+
+
+class DeliberatingClient(FakeClient):
+    """A client that reports deliberation, like AIClient, so the redraw is
+    observable: the first draw carries none."""
+
+    def __init__(self, responses: list[str], deliberations: list[str]) -> None:
+        super().__init__(responses)
+        self._deliberations = deliberations
+        self.last_reasoning = ""
+
+    @override
+    def chat(self, system: str, user: str, *, reasoning: bool = False) -> str:
+        answer = super().chat(system, user, reasoning=reasoning)
+        self.last_reasoning = self._deliberations.pop(0)
+        return answer
+
+
+def test_a_draw_without_deliberation_is_drawn_again() -> None:
+    """The provider answers some draws with no deliberation. A judgement made
+    without it is thinner than the one asked for, so the draw is replaced —
+    same prompt, fresh sample — and the second answer is the one used."""
+    client = DeliberatingClient(
+        [
+            '{"relevant": false, "contradiction": {"found": false, "detail": ""}, "confidence": "dont_know"}',
+            '{"relevant": true, "contradiction": {"found": false, "detail": ""}, '
+            '"confidence": "think_so", "note": "Grandma used to say so.", "findings": []}',
+        ],
+        deliberations=["", "the war record says he died"],
+    )
+    result = investigate(client, text="Grandma used to say so.", person=_person(), who="Alex", facts=make_facts())
+    assert result.relevant == "true"
+    assert len(client.calls) == 2  # the reasoning-less draw was replaced
 
 
 def test_on_topic_answer_is_relevant() -> None:

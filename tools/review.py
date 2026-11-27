@@ -532,6 +532,16 @@ def investigate(
     ):  # the digs, plus the verdict and a correction
         try:
             raw = client.chat(prompt, user, reasoning=True)
+            # only a client that reports deliberation can be judged on it: a fake
+            # without the attribute is not "no reasoning", it is not a model
+            if getattr(client, "last_reasoning", None) == "":
+                # The provider answers some draws with no deliberation at all,
+                # and a judgement made without it is thinner than the one asked
+                # for (measured: the same prompt, the same route, mixed draws).
+                # A draw that carried none is replaced once — a fresh sample, not
+                # a rewritten prompt, because the question did not change.
+                logger.warning("review: the model answered without its deliberation — drawing again")
+                raw = client.chat(prompt, user, reasoning=True)
             parsed = json_object(raw)
         except AIClientError as e:
             raise ElicitationError(f"investigation failed: {e}") from e

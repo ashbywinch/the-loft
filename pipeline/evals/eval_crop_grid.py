@@ -257,14 +257,20 @@ def _rotated_reading(rotated: _RotatedCrop, options: VlmOptions, upright: _Readi
     measured nothing still cost them."""
     answer = options.run(transcribe_image_vlm, rotated.path)
     parsed = parse_transcription_response(answer.answer)
-    cost = replace(upright, tokens=upright.tokens + answer.usage.tokens)
+    tokens = upright.tokens + answer.usage.tokens
     lines = parsed.boxed_lines()
     if not lines:
-        return replace(cost, failure=ReadFailure(kind="answer", detail="the rotated read gave no usable lines"))
-    remapped = [
-        TranscribedLine(line.text, remap_rotated(line.box, rotated.pixel_width, rotated.pixel_height)) for line in lines
-    ]
-    return replace(cost, lines=remapped)
+        return _Reading(
+            lines=upright.lines,
+            tokens=tokens,
+            vertical=upright.vertical,
+            failure=ReadFailure(kind="answer", detail="the rotated read gave no usable lines"),
+        )
+    return _Reading(
+        lines=[TranscribedLine(line.text, remap_rotated(line.box, rotated)) for line in lines],
+        tokens=tokens,
+        vertical=upright.vertical,
+    )
 
 
 def read_crop(
@@ -332,18 +338,27 @@ def read_crop(
     return CropRead(lines=lines, tokens=reading.tokens, failure=reading.failure)
 
 
-def remap_rotated(box: list[float], rot_w: int, rot_h: int) -> list[float]:
-    """The NORMALIZED box (0-1000) in the +90-rotated frame -> the
-    original crop frame's pixels. The +90 rotation maps (x, y) -> (y,
-    H' - x); the inverse is x = H' - y', y = x'. The normalized box
-    must scale to the rotated frame's pixels FIRST. The x-order flips
-    too (the panel's x increases as the rotated frame's y decreases)."""
-    x0n, y0n, x1n, y1n = box
+def remap_rotated(box: list[float], frame: _RotatedCrop) -> list[float]:
+    """A NORMALIZED box (0-1000), measured on the ROTATED crop, as pixels in the
+    crop before it was turned.
+
+    A +90° turn swaps the axes: the rotated frame's HEIGHT is the crop's width,
+    and its width the crop's height. So the crop's x comes from the rotated
+    height and its y from the rotated width — swapped on purpose, which is why
+    this takes the frame as one value rather than two numbers a caller could
+    pass in the wrong order.
+
+    The turn maps (x, y) → (y, H − x), so the inverse is x = H − y', y = x'; the
+    normalized box scales to the rotated frame's pixels first, and the x order
+    flips because the panel's x rises as the rotated frame's y falls.
+    """
+    crop_width, crop_height = frame.pixel_height, frame.pixel_width
+    x0, y0, x1, y1 = box
     return [
-        rot_h - (y1n / 1000) * rot_h,
-        (x0n / 1000) * rot_w,
-        rot_h - (y0n / 1000) * rot_h,
-        (x1n / 1000) * rot_w,
+        crop_width - (y1 / 1000) * crop_width,
+        (x0 / 1000) * crop_height,
+        crop_width - (y0 / 1000) * crop_width,
+        (x1 / 1000) * crop_height,
     ]
 
 

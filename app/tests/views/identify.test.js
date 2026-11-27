@@ -74,7 +74,13 @@ function stubFetch({ identified = IDENTIFIED_ITEM, places = [SEASCALE] } = {}) {
       if (url.startsWith("/api/identify/document/")) {
         return Promise.resolve({
           ok: true,
-          json: async () => ({ ok: true, item: copy(identified), people: copy(state.people), places: copy(places), pending: 2 }),
+          json: async () => ({
+            ok: true,
+            item: copy(identified),
+            people: copy(state.people),
+            places: copy(places),
+            pending: 2,
+          }),
         });
       }
       const body = JSON.parse(init?.body ?? "{}");
@@ -217,9 +223,7 @@ describe("the identification queue (UR2)", () => {
   });
 
   it("lists a document the pass has not read", () => {
-    expect(documentsToIdentify({ items: [documentItem({})] }).map((item) => item.id)).toEqual([
-      "doc-1971-05-01",
-    ]);
+    expect(documentsToIdentify({ items: [documentItem({})] }).map((item) => item.id)).toEqual(["doc-1971-05-01"]);
   });
 
   it("lists a read document whose mentions still wait", () => {

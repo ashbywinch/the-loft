@@ -161,11 +161,7 @@ export async function boot() {
       console.error("boot: failed to load the archive", error);
       const bootRoot = document.getElementById("app");
       bootRoot.replaceChildren(
-        el(
-          "div",
-          { class: "empty" },
-          `Could not load the archive (${error.message}). Reload to retry.`,
-        ),
+        el("div", { class: "empty" }, `Could not load the archive (${error.message}). Reload to retry.`),
       );
       return;
     }

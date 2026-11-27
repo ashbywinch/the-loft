@@ -343,7 +343,10 @@ describe("the batch list renders the real batches", () => {
     const pending = new Promise((resolve) => {
       resolveFetch = resolve;
     });
-    vi.stubGlobal("fetch", vi.fn(() => pending));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => pending),
+    );
     const main = document.createElement("main");
     render(main, { name: "review" });
     expect(main.querySelector(".rv-topbar")).not.toBeNull();

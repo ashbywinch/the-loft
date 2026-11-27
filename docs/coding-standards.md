@@ -510,18 +510,6 @@ subclass the real thing so the type checker still holds.
   same change; a doc whose contract lags the code gets cited by the reviewer,
   and correctly so.
 
-## Commands and their exit status
-
-- **Never report a state change from a piped command.** A pipeline's
-  status is its last stage's, so `git commit … | tail -1` exits 0 when the
-  commit was refused.
-- **Keep the mutating command's own status**: `git commit -q -m "<subject>"`
-  prints nothing and returns git's; where a pipe is wanted, `${pipestatus[1]}`
-  (zsh) keeps the first stage's.
-- **Read the state back**: `git log -1 --format=%s` after a commit,
-  `git ls-remote origin <branch>` after a push, `gh pr view <n> --json author`
-  after a create. The reported fact is the one read back, never the exit code.
-
 ## Conventions
 
 - Tests never hit the network or wall-clock; seeded randoms only.

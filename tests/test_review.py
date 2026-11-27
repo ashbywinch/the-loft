@@ -67,6 +67,10 @@ def _item_hits(result: ToolResult) -> list[ItemHit]:
 class FakeClient:
     """Satisfies the ChatClient protocol — one scripted response queue."""
 
+    # a double that reports deliberation, like the real client: the redraw only
+    # sees a draw without any when a test says so
+    last_reasoning = "scripted deliberation"
+
     def __init__(self, responses: list[str]) -> None:
         self.responses = responses
         self.calls: list[tuple[str, str]] = []

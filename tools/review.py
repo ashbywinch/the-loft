@@ -52,8 +52,18 @@ def _relevant_sentences(text: str, needles: tuple[str, ...], limit: int = 3) -> 
     return [s[:300] for s in pool[:limit]]
 
 
-class _Chat(Protocol):
-    # instance method using self
+class DeliberatingClient(Protocol):
+    """The model seam the investigation needs: the chat call, plus the
+    deliberation the last reply carried.
+
+    ``last_reasoning`` is part of *this* contract because the review judges on
+    it — a turn that carried none answered from the surface, and the review has
+    to be able to tell. Callers that do not care about deliberation (memory's
+    elicitation, the identifier's read) keep the narrower seam.
+    """
+
+    @property
+    def last_reasoning(self) -> str: ...
 
     def chat(self, system: str, user: str, *, reasoning: bool = False) -> str: ...
 
@@ -317,6 +327,29 @@ def render_history(messages: tuple[Message, ...]) -> str:
     return "\n".join(lines)
 
 
+def _deliberated(client: DeliberatingClient, prompt: str, user: str) -> str:
+    """One turn that must carry its deliberation.
+
+    The provider answers some draws with no reasoning at all, and a judgement
+    made without it is thinner than the one asked for — the failing contradiction
+    eval was such a draw, and it read a record as compatible with the statement.
+    A draw that carried none is replaced ONCE: the same prompt, a fresh sample,
+    because the question did not change. A second undeliberated draw is used and
+    logged, because a provider that omits it every time is a provider change, and
+    the eval is what detects that rather than a longer retry ladder here.
+    """
+    raw = client.chat(prompt, user, reasoning=True)
+    deliberation = getattr(client, "last_reasoning", None)
+    if deliberation is None:
+        # the seam declares the property, so this client does not meet it: say so
+        # rather than treating the turn as deliberate
+        logger.warning("review: this client reports no deliberation — a surface answer cannot be told apart")
+    elif deliberation == "":
+        logger.warning("review: the model answered without its deliberation — drawing again")
+        raw = client.chat(prompt, user, reasoning=True)
+    return raw
+
+
 # the reviewer identity, the facts context, the history — a parameter object would add ceremony at the DI boundary
 # lucidlint: ignore long-param-list the investigation's inputs — the client seam, the answer, the person under review,
 class Investigation:
@@ -363,7 +396,7 @@ catch yourself repeating a step, stop and emit the verdict."""
 # the reviewer identity, the facts context, the history — a parameter object would add ceremony at the DI boundary
 # lucidlint: ignore long-param-list the investigation's inputs — the client seam, the answer, the person under review,
 def investigate(
-    client: _Chat,
+    client: DeliberatingClient,
     *,
     text: str,
     person: Person,
@@ -531,17 +564,7 @@ def investigate(
         Investigation.MAX_STEPS + Investigation.VERDICT_AND_CORRECTION_TURNS
     ):  # the digs, plus the verdict and a correction
         try:
-            raw = client.chat(prompt, user, reasoning=True)
-            # only a client that reports deliberation can be judged on it: a fake
-            # without the attribute is not "no reasoning", it is not a model
-            if getattr(client, "last_reasoning", None) == "":
-                # The provider answers some draws with no deliberation at all,
-                # and a judgement made without it is thinner than the one asked
-                # for (measured: the same prompt, the same route, mixed draws).
-                # A draw that carried none is replaced once — a fresh sample, not
-                # a rewritten prompt, because the question did not change.
-                logger.warning("review: the model answered without its deliberation — drawing again")
-                raw = client.chat(prompt, user, reasoning=True)
+            raw = _deliberated(client, prompt, user)
             parsed = json_object(raw)
         except AIClientError as e:
             raise ElicitationError(f"investigation failed: {e}") from e

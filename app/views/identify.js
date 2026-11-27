@@ -216,9 +216,7 @@ export function render(main, ctx, state) {
         : "Every entity is settled — nothing more to identify here.";
     list.replaceChildren(...rows.map((row) => entityRow(state, row, onChange, decided)));
     if (item.identified && !waiting && !rows.length) {
-      list.append(
-        el("p", { class: "empty" }, "The document names no people or places the archive can identify."),
-      );
+      list.append(el("p", { class: "empty" }, "The document names no people or places the archive can identify."));
     }
   };
 

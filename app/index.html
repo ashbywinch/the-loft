@@ -10,7 +10,14 @@
   <body>
     <div id="app"></div>
     <noscript>
-      <p style="padding: 1rem; font: 16px system-ui, sans-serif">
+      <p
+        style="
+          padding: 1rem;
+          font:
+            16px system-ui,
+            sans-serif;
+        "
+      >
         The Loft needs JavaScript. Enable it for this site, or open the archive in a current browser.
       </p>
     </noscript>
@@ -28,10 +35,7 @@
 
         var loading = document.createElement("div");
         loading.id = "boot-loading";
-        loading.setAttribute(
-          "style",
-          "padding:1rem;font:16px system-ui,sans-serif;color:#1b1b1b;background:#fff;",
-        );
+        loading.setAttribute("style", "padding:1rem;font:16px system-ui,sans-serif;color:#1b1b1b;background:#fff;");
         loading.textContent = "The Loft — loading…";
         if (app) app.appendChild(loading);
 
@@ -46,10 +50,7 @@
           root.innerHTML = "";
           var panel = document.createElement("div");
           panel.className = "empty";
-          panel.setAttribute(
-            "style",
-            "padding:1rem;font:16px system-ui,sans-serif;color:#1b1b1b;background:#fff;",
-          );
+          panel.setAttribute("style", "padding:1rem;font:16px system-ui,sans-serif;color:#1b1b1b;background:#fff;");
           panel.textContent = "The app failed to start (" + what + "). Reload to retry.";
           root.appendChild(panel);
         }

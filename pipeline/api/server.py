@@ -54,6 +54,7 @@ from pipeline.api.confirmation_request import ConfirmationRequest
 from pipeline.api.delete_request import DeleteRequest
 from pipeline.api.device_poll_request import DevicePollRequest
 from pipeline.api.error_answer import ErrorAnswer
+from pipeline.api.family import family_members, malformed_members
 from pipeline.api.health_answer import HealthAnswer
 from pipeline.api.identify_answer import IdentifyAnswer
 from pipeline.api.identify_decide_answer import IdentifyDecideAnswer, receipt
@@ -299,7 +300,7 @@ def build_app(
         return response
 
     def _set_session_cookie(response: JSONResponse | RedirectResponse, user: SessionUser) -> None:
-        cookie = auth._make_session_cookie(user)
+        cookie = auth.session_cookie(user)
         response.set_cookie(
             auth.GoogleOAuth.COOKIE_NAME,
             cookie,
@@ -709,6 +710,25 @@ def build_app(
 
     # -- the static app + the data gate ------------------------------------
 
+    # the family list is the private layer's only key: an empty one refuses
+    # the whole family, and from a phone that refusal looks like a broken
+    # server. Say so once, at startup, where the operator is looking.
+    if not family_members():
+        logger.warning(
+            "family: THE_LOFT_FAMILY_MEMBERS is empty — nobody can read the archive "
+            "until it names the family's Google accounts"
+        )
+    else:
+        malformed = malformed_members()
+        if malformed:
+            logger.warning(
+                "family: %d entr%s in THE_LOFT_FAMILY_MEMBERS cannot be an email address (%s) — "
+                "those accounts are refused until the list is corrected",
+                len(malformed),
+                "y" if len(malformed) == 1 else "ies",
+                ", ".join(malformed),
+            )
+
     @app.middleware("http")
     async def log_shell_request(request: Request, call_next: Any) -> Any:
         # The shell's client identity is the first thing to know when a phone
@@ -750,12 +770,29 @@ def build_app(
     @app.middleware("http")
     async def gate_data(request: Request, call_next: Any) -> Any:
         # the archive's data is the private layer — a session is required
-        # to read it (user: content gated behind sign-in). The
-        # app shell stays public so the gate can load.
-        if request.url.path.startswith("/data/"):
+        # to read it (user: content gated behind sign-in), and the session
+        # must be one of the FAMILY's: a Google account that signs in is not
+        # family (user: the household's allowlist). The app shell stays
+        # public so the gate can load, and so does sign-in itself.
+        path = request.url.path
+        # first match is public: the sign-in flow and the health probe. Every
+        # other /api path and every /data path is the archive.
+        if path.startswith(("/data/", "/api/")) and not path.startswith(("/api/auth/", "/api/health")):
             session = auth.session_user_from_cookie(request.cookies.get(auth.GoogleOAuth.COOKIE_NAME))
             if session is None:
-                return JSONResponse({"ok": False, "error": "sign in to read the archive"}, status_code=401)
+                # the projection files have no route of their own to answer a
+                # 401 (a static mount serves them), so the guard answers here;
+                # the API routes each answer their own 401 with their own words
+                if path.startswith("/data/"):
+                    return JSONResponse({"ok": False, "error": "sign in to read the archive"}, status_code=401)
+            elif not auth.is_family(session):
+                # two-tier: the phone gets the fact, the log gets the account —
+                # a mistyped allowlist entry is otherwise a 403 with no trace
+                logger.info("gate: refused %s — not on the family list", session.email)
+                return JSONResponse(
+                    ErrorAnswer("this account is not on the archive's family list").to_dict(),
+                    status_code=403,
+                )
         return await call_next(request)
 
     # -- sync (TECHSPEC/04 §17.5: the backend owns the write seam; the

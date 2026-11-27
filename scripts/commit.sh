@@ -1,41 +1,54 @@
 #!/bin/bash
 # Commit through the formatter, and prove the commit landed.
 #
-# The hooks reformat the whole Python tree, so a commit that stages first is
-# refused after the formatter rewrote it — and a refused commit leaves HEAD
-# where it was, so the next push sends the old head. Formatting first leaves the
-# hooks nothing to fix.
+# Usage: scripts/commit.sh "<subject>" [path ...]
 #
-# A pipeline's exit status is its last stage's, so a caller cannot tell a
-# refused commit from a made one; this ends by reading the subject back from
-# HEAD and fails when they differ.
+# Stage only what you name: with no paths the script stages TRACKED changes
+# (`git add -u`); a new file must be named, so an untracked artefact in the tree
+# cannot ride along. The hooks reformat the whole Python tree, so the formatter
+# runs first — a commit refused after a reformat leaves HEAD where it was.
 #
-# Usage: scripts/commit.sh "<subject>" ["<body file>"]
+# The script ends by reading HEAD back: a refused commit and a made one are
+# indistinguishable from a pipeline's status.
 set -euo pipefail
 
-[ $# -ge 1 ] || { echo "usage: scripts/commit.sh <subject> [body-file]" >&2; exit 2; }
+[ $# -ge 1 ] || { echo "usage: scripts/commit.sh <subject> [path ...]" >&2; exit 2; }
 subject="$1"
-body="${2:-}"
+shift
 
 cd "$(git rev-parse --show-toplevel)"
 
-make format >/dev/null
-git add -A
+format_log="$(mktemp)"
+trap 'rm -f "$format_log"' EXIT
+if ! make format >"$format_log" 2>&1; then
+    cat "$format_log" >&2
+    echo "make format failed — nothing was committed" >&2
+    exit 1
+fi
+
+if [ $# -gt 0 ]; then
+    git add -- "$@"
+else
+    git add -u
+fi
 
 if git diff --cached --quiet; then
-    echo "nothing to commit — the tree matches HEAD"
+    echo "nothing to commit — the staged tree matches HEAD"
     exit 0
 fi
 
-if [ -n "$body" ]; then
-    git commit -q -F "$body" || { echo "commit refused — read the hook output above" >&2; exit 1; }
-else
-    git commit -q -m "$subject" || { echo "commit refused — read the hook output above" >&2; exit 1; }
-fi
+before="$(git rev-parse HEAD)"
+git commit -m "$subject"
 
-landed="$(git log -1 --format=%s)"
-if [ "$landed" != "$subject" ]; then
-    echo "the commit did not land — HEAD is '$landed'" >&2
+if [ "$(git rev-parse HEAD)" = "$before" ]; then
+    echo "the commit did not land — HEAD is still $(git log -1 --oneline)" >&2
     exit 1
 fi
-echo "committed: $(git log -1 --oneline)"
+
+landed="$(git log -1 --format=%s | sed 's/[[:space:]]*$//')"
+wanted="$(printf '%s' "$subject" | sed 's/[[:space:]]*$//')"
+if [ "$landed" != "$wanted" ]; then
+    echo "the commit landed as '$landed', not '$wanted'" >&2
+    exit 1
+fi
+git log -1 --oneline

@@ -109,17 +109,8 @@ default. Real content never lives in code (`docs/coding-standards.md`).
 - Atomic commits; reference issues with `Fixes #N`.
 - **Never report a state change from a piped command**: `git commit -q -m
   "<subject>"`, then read `git log -1 --format=%s` back. `scripts/commit.sh
-  "<subject>"` formats, commits and does the read-back; the rule and its
-  reason are `skill://pr-workflow` § 1c.
-- Atomic commits; reference issues with `Fixes #N`.
-- **Commit with `scripts/commit.sh "<subject>"`** (or format first, then `git
-  commit`). The hooks reformat the whole Python tree, so a commit that skips
-  `make format` is refused after the formatter rewrote the file; the script
-  formats, stages, commits, and reads the subject back from HEAD, because a
-  piped `git commit` reports the pipe's exit status and a refusal then looks
-  exactly like a success. `git commit -q -m "<subject>"` prints nothing and
-  keeps git's own status; when a pipe is unavoidable, `${pipestatus[1]}` keeps
-  the first element's.
+  "<subject>"` formats, commits and does the read-back; the rule is
+  `skill://pr-workflow` § 1c.
 - Archive data is NEVER committed: the `archive/` directory is gitignored
   and data-free in the repo; the real family content lives on the
   workspace volume and is regularly backed up. The archive's durability

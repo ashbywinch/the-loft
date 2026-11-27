@@ -37,6 +37,14 @@ if git diff --cached --quiet; then
     exit 0
 fi
 
+# The formatter touches the whole tree; what it changed outside what you named
+# stays behind, and saying so is the difference between a contract and a surprise.
+left="$(git diff --name-only)"
+if [ -n "$left" ]; then
+    echo "left unstaged (not part of this commit):"
+    printf '  %s\n' $left
+fi
+
 before="$(git rev-parse HEAD)"
 git commit -m "$subject"
 

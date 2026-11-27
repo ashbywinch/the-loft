@@ -35,6 +35,26 @@ class DocumentState:
     confirmed_at: str | None
     version: int = 0
 
+    def to_dict(self) -> dict[str, Any]:
+        """The document as the event payload's wire record — the state fields,
+        without the row's version (the event carries the version itself)."""
+        return {
+            "document_id": self.document_id,
+            "item_id": self.item_id,
+            "batch_id": self.batch_id,
+            "doc_index": self.doc_index,
+            "title": self.title,
+            "date_json": self.date_json,
+            "date": self.date,
+            "date2": self.date2,
+            "date_precision": self.date_precision,
+            "status": self.status,
+            "greeting": self.greeting,
+            "signoff": self.signoff,
+            "text_sha": self.text_sha,
+            "confirmed_at": self.confirmed_at,
+        }
+
 
 @dataclass(frozen=True)
 class DocumentPage:

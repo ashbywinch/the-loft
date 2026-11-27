@@ -93,10 +93,6 @@ def _extraction_names(result: Assessment) -> list[str]:
     return [ex.name for ex in result.extractions]
 
 
-def _question_texts(result: Assessment) -> str:
-    return " ".join(q.text for q in result.questions).lower()
-
-
 def _facts_of_kind(result: Assessment, kind: str) -> list[AssessmentFact]:
     return [f for f in result.facts if f.kind == kind]
 
@@ -321,9 +317,9 @@ class AgeWithKnownDobNotAskedFlow(MemoryFlow):
     @override
     @staticmethod
     def assert_(result: Assessment) -> list[str]:
-        if not any(w in _question_texts(result) for w in MemoryFlow._DATE_ASK):
+        if not any(w in result.question_text() for w in MemoryFlow._DATE_ASK):
             return []
-        return [f"asked for a date despite a known dob + given age: {_question_texts(result)}"]
+        return [f"asked for a date despite a known dob + given age: {result.question_text()}"]
 
 
 class AgeWithoutDobAsksFlow(MemoryFlow):
@@ -341,7 +337,7 @@ class AgeWithoutDobAsksFlow(MemoryFlow):
     @override
     @staticmethod
     def assert_(result: Assessment) -> list[str]:
-        if any(w in _question_texts(result) for w in MemoryFlow._DATE_ASK):
+        if any(w in result.question_text() for w in MemoryFlow._DATE_ASK):
             return []
         return ["no date question asked despite an unknown dob and only an age given"]
 
@@ -361,7 +357,7 @@ class DobStatedAssertedFlow(MemoryFlow):
     @override
     @staticmethod
     def assert_(result: Assessment) -> list[str]:
-        if _facts_of_kind(result, "dob") and not any(w in _question_texts(result) for w in MemoryFlow._DATE_ASK):
+        if _facts_of_kind(result, "dob") and not any(w in result.question_text() for w in MemoryFlow._DATE_ASK):
             return []
         return ["expected an asserted dob fact and no date question when dob + age are computable"]
 
@@ -381,7 +377,7 @@ class NewNarratorConnectionFlow(MemoryFlow):
     @override
     @staticmethod
     def assert_(result: Assessment) -> list[str]:
-        if any(w in _question_texts(result) for w in ("connect", "related", "relationship", "family")):
+        if any(w in result.question_text() for w in ("connect", "related", "relationship", "family")):
             return []
         return ["no question asks how the new narrator is connected to the family"]
 
@@ -401,7 +397,7 @@ class NewArtifactAskedFlow(MemoryFlow):
     @override
     @staticmethod
     def assert_(result: Assessment) -> list[str]:
-        if "kasia" in _question_texts(result):
+        if "kasia" in result.question_text():
             return []
         return ["no 'tell me more' question about the newly named artifact (Kasia)"]
 

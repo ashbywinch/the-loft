@@ -14,7 +14,6 @@ import {
   published,
 } from "../data.js";
 
-
 function todayMoment(items) {
   const now = new Date();
   let best = null;
@@ -93,10 +92,7 @@ export function render(main, _ctx, state) {
   const portalSection = el("section", { class: "block review-promo" }, [
     el("a", { class: "review-card", href: "#/review" }, [
       el("div", { class: "review-card-icon" }, "✓"),
-      el("div", { class: "review-card-main" }, [
-        el("div", { class: "review-card-title" }, "Review"),
-        portalNote,
-      ]),
+      el("div", { class: "review-card-main" }, [el("div", { class: "review-card-title" }, "Review"), portalNote]),
     ]),
   ]);
   (async () => {

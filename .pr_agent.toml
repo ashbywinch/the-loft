@@ -58,6 +58,10 @@ num_max_findings = 20
 # Publish each finding as a verified inline review comment (the pinned action
 # implements get_persistent_comment_bodies/get_recent_inline_comment_bodies).
 inline_key_issues = true
+# Fingerprint an inline finding so the identical one is never re-posted on a
+# later push. Without it a full re-review re-posts the same finding on the same
+# line: nine copies of one sentence arrived in a single review on #160.
+persistent_inline_comments = true
 extra_instructions = """
 - **Scope.** Read the diff against the files in repo_context_files. Cite the file that states a rule when you invoke it, and never call something compliant without checking it there. Each violation is its own finding with path:line.
 - **Vocabulary.** Glossary: docs/PRD/PRD.md and docs/object-model.md. Judge a name in the domain of the code that holds it — the reader, the layout, the live store and the evals each own their terms. Report a name that contradicts the model, or that is not a term of its domain where one exists. Never report absence: the model holds the concepts a reader cannot infer and the word two concepts might share, not every identifier.

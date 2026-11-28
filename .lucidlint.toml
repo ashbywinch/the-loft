@@ -16,15 +16,14 @@
 # Rectangle.to_dict (one owner of the box wire), pinned by
 # tests/document/test_word.py on words.json's key set and order.
 #
-# The residual is the record doctrine's own wire edges (257 at 0.10.0: 101
-# constant-key, 47 dict-return, 42 dict-of-record, 35 fixed-tuple, 25
-# list-of-records, 8 map): a record's own to_dict with wire aliases (kind ->
-# type, from_ -> from) or an envelope constant (ok); event/API envelopes
-# composed of records ({batch, scans}, bootstrap's {me, index, ...}); row
-# mappings that flatten DB columns; fixtures/demo content writing the model's
-# wire and constant lookup tables. Each class already exists; a second bare
-# dict for a record, or a sixth copy of a record's wire, is a review finding,
-# and the config_ignored count is reported every run so growth is visible.
+# TEMPORARY (2026-11-28): this ignore is being REMOVED, one family per PR —
+# constant-key (this PR: Word delegates to Rectangle), then dict-return 47,
+# dict-of-record 42, fixed-tuple 35, list-of-records 25, map 8. The entry is
+# deleted in the PR that takes the last finding; nothing is baselined. The
+# trigger and the reduced repro are docs/PLAN/lucidlint-review-log.md §1.5.
+# Until then this note states what is still hidden, not a licence: a new bare
+# dict for a record is a review finding, and the config_ignored count is
+# reported every run.
 # global-state: the repo standard REQUIRES named constants and forbids the
 # thing this rule should catch — module-level mutable state. On 0.7.1 the rule
 # flags every module-level constant (348 on this tree); the repo's answer is

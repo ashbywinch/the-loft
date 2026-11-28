@@ -393,33 +393,10 @@ and never restate the reviewer's statement back to yourself. If you
 catch yourself repeating a step, stop and emit the verdict."""
 
 
-# the reviewer identity, the facts context, the history — a parameter object would add ceremony at the DI boundary
-# lucidlint: ignore long-param-list the investigation's inputs — the client seam, the answer, the person under review,
-def investigate(
-    client: DeliberatingClient,
-    *,
-    text: str,
-    person: Person,
-    who: str,
-    facts: ReviewContext,
-    history: tuple[Message, ...] = (),
-) -> ReviewVerdict:
-    """The tool-using review of a free-text answer (user): the
-    model can call the archive's read-only lookups to dig into the
-    reviewer's statement — follow the leads and surface what the archive
-    already attests — then return the ReviewVerdict: the check's answers,
-    the findings the tools surfaced, and the genealogist's question. *history* is the
-    conversation so far (the messages, including the model's own previous
-    reasoning), rendered verbatim into the prompt — the model always sees
-    its own history, so a message that re-answers an earlier question is
-    recognised as such. The findings are the digging's results — shown to
-    the reviewer. The tools are read-only: the decisions stay in the app's
-    flow. The never-derive rule holds — the model reports what it finds,
-    it never invents a kinship. ``raw`` is the model's final raw output,
-    stored verbatim as the turn's thinking."""
-    text = str(text or "").strip()
-    if not text:
-        raise ElicitationError("no answer given")
+def _claim(person: Person) -> str:
+    """The app's question about the document under review, with the record's
+    own relation language when it has one — the model echoes the claim's
+    words, so the wording is family language, never the system's."""
     # The claim is the APP's question about the document the family uploaded:
     # the app has read it and is checking what it says. "The family is
     # checking" would read as the family asking, and a statement about the
@@ -431,15 +408,14 @@ def investigate(
         # own words, and the persona rule forbids 'the import'/'proposes'/
         # 'link' (the prompt must not model the jargon it forbids)
         claim += f" — the record under review says: {person.relation}"
-    # the conversation renders uniformly and sits LAST in the prompt — the
-    # static (the reviewer, the claim, the facts, the instructions) comes
-    # before it, so the previous prompt's exact text is the current prompt's
-    # prefix and the model's prompt-cache reuses the whole thing
-    # (user: 'the exact same text goes back… cheaper if so,
-    # because of caching'). The latest line is part of the same render, so
-    # a message that re-answers an earlier question is seen in context.
-    conversation = render_history(history + (Message(role="user", text=text, when=""),))
-    user = "\n\n".join(
+    return claim
+
+
+def _review_user(*, who: str, claim: str, facts: ReviewContext, conversation: str) -> str:
+    """The investigator's user turn: who is reviewing, the claim, the attested
+    facts, the four decisions, the tools, and the conversation last (the
+    prompt-cache prefix is the previous prompt's exact text)."""
+    return "\n\n".join(
         [
             f"Reviewer: {who or 'unknown'}",
             # the conversation's frame: the family uploaded a document, the app
@@ -501,6 +477,12 @@ def investigate(
             f"arc):\n{conversation}",
         ]
     )
+
+
+def _review_prompt() -> tuple[str, str]:
+    """The static investigator prompt and the verdict schema — the schema is
+    in the INITIAL prompt, because revealing it only on the correction branch
+    made every first call fail once and doubled every exchange."""
     prompt = (
         "You are the family's genealogist — a friendly, professional researcher "
         "talking to the family about their own archive.\n\n"
@@ -553,6 +535,43 @@ def investigate(
         "relevant, contradiction, confidence, note, findings, question — no others, "
         "no misspellings, no missing keys (a misspelled key is a failed verdict)."
     )
+    return prompt, verdict
+
+
+# the reviewer identity, the facts context, the history — a parameter object would add ceremony at the DI boundary
+# lucidlint: ignore long-param-list the investigation's inputs — the client seam, the answer, the person under review,
+def investigate(
+    client: DeliberatingClient,
+    *,
+    text: str,
+    person: Person,
+    who: str,
+    facts: ReviewContext,
+    history: tuple[Message, ...] = (),
+) -> ReviewVerdict:
+    """The tool-using review of a free-text answer (user): the
+    model can call the archive's read-only lookups to dig into the
+    reviewer's statement — follow the leads and surface what the archive
+    already attests — then return the ReviewVerdict: the check's answers,
+    the findings the tools surfaced, and the genealogist's question. *history* is the
+    conversation so far (the messages, including the model's own previous
+    reasoning), rendered verbatim into the prompt — the model always sees
+    its own history, so a message that re-answers an earlier question is
+    recognised as such. The findings are the digging's results — shown to
+    the reviewer. The tools are read-only: the decisions stay in the app's
+    flow. The never-derive rule holds — the model reports what it finds,
+    it never invents a kinship. ``raw`` is the model's final raw output,
+    stored verbatim as the turn's thinking."""
+    text = str(text or "").strip()
+    if not text:
+        raise ElicitationError("no answer given")
+    claim = _claim(person)
+    # the conversation renders uniformly and sits LAST in the prompt — the
+    # static part comes first, so the previous prompt's exact text is the
+    # current prompt's prefix (the model's prompt-cache reuses it)
+    conversation = render_history(history + (Message(role="user", text=text, when=""),))
+    user = _review_user(who=who, claim=claim, facts=facts, conversation=conversation)
+    prompt, verdict = _review_prompt()
     tool_calls = 0
     trace: list[TraceStep] = []
     # the stable prompt — the static plus the conversation before the

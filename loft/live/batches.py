@@ -96,39 +96,11 @@ class Batches:
 def batch_payload(batch: BatchState, scans: tuple[ScanState, ...]) -> str:
     """The event payload: the registry record and its scans."""
     return json.dumps(
-        {"batch": _batch_dict(batch), "scans": [_scan_dict(scan) for scan in scans]},
+        {"batch": batch.to_dict(), "scans": [scan.to_dict() for scan in scans]},
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=False,
     )
-
-
-def _batch_dict(batch: BatchState) -> dict[str, Any]:
-    return {
-        "batch_id": batch.batch_id,
-        "label": batch.label,
-        "source": batch.source,
-        "path": batch.path,
-        "status": batch.status,
-        "arrived_at": batch.arrived_at,
-        "started_at": batch.started_at,
-        "started_pid": batch.started_pid,
-        "started_host": batch.started_host,
-        "fingerprint": list(batch.fingerprint),
-        "content_changed": batch.content_changed,
-    }
-
-
-def _scan_dict(scan: ScanState) -> dict[str, Any]:
-    return {
-        "scan_id": scan.scan_id,
-        "batch_id": scan.batch_id,
-        "page_id": scan.page_id,
-        "sha256": scan.sha256,
-        "path": scan.path,
-        "ordinal": scan.ordinal,
-        "created_at": scan.created_at,
-    }
 
 
 def batch_from_payload(payload: dict[str, Any]) -> tuple[BatchState, tuple[ScanState, ...]]:

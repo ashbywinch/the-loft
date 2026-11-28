@@ -187,8 +187,8 @@ class _WorkCommand:
     batch, watch, or one sweep — the paths and the worker travel together."""
 
     def __init__(self, paths: LoftPaths, worker: Worker) -> None:
-        self.paths = paths
-        self.worker = worker
+        self.paths: LoftPaths = paths
+        self.worker: Worker = worker
 
     def requeue(self, batch_id: str) -> int:
         try:
@@ -532,14 +532,15 @@ def _gedcom_export(folder_arg: str, path_arg: str) -> int:
     return 0
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="loft", description="The Loft archive tools — one surface.")
-    sub = parser.add_subparsers(dest="command", required=True)
-
+def _publish_command(sub: Any) -> None:
+    """`loft publish` — regenerate the projection from the archive."""
     p = _command(sub, name="publish", help_text="regenerate the projection (app/data) from the archive", fn=cmd_publish)
     p.add_argument("--archive", default=str(LoftPaths.ARCHIVE_DIR))
     p.add_argument("--data", default="app/data")
 
+
+def _serve_command(sub: Any) -> None:
+    """`loft serve` — the app and the live write surface."""
     p = _command(sub, name="serve", help_text="serve the app (no-cache) with the memory-capture API", fn=cmd_serve)
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8124)
@@ -553,6 +554,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--reload", action="store_true", help="auto-reload the backend on source changes (make serve)")
 
+
+def _capture_memory_command(sub: Any) -> None:
+    """`loft capture-memory` — capture one account as a memory."""
     p = _command(
         sub,
         name="capture-memory",
@@ -565,6 +569,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--status", default="draft", choices=["draft", "catalogued"])
     p.add_argument("--archive", default=str(LoftPaths.ARCHIVE_DIR))
 
+
+def _work_command(sub: Any) -> None:
+    """`loft work` — the machine stages for dropped scans."""
     p = _command(
         sub,
         name="work",
@@ -591,15 +598,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="put one batch back in the queue before the sweep (a batch a person has finished with, or a dead pass)",
     )
 
+
+def _db_command(sub: Any) -> None:
+    """`loft db` — the live database's own actions."""
     p = sub.add_parser("db", help="the live database")
     db = p.add_subparsers(dest="db_action", required=True)
     pi = _command(db, name="init", help_text="create the live database from schema/", fn=cmd_db_init)
     pi.add_argument("--path", default=str(default_database_path()))
 
+
+def _verify_command(sub: Any) -> None:
+    """`loft verify` — the live database's schema and pragmas."""
     p = _command(sub, name="verify", help_text="verify the live database", fn=cmd_verify)
     p.add_argument("--schema", action="store_true", help="verify the schema, pragmas and migration head")
     p.add_argument("--path", default=str(default_database_path()))
 
+
+def _migrate_command(sub: Any) -> None:
+    """`loft migrate` — the one-time archive and workspace import."""
     p = _command(
         sub,
         name="migrate",
@@ -613,6 +629,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dry-run", action="store_true", help="print the operation list and write nothing")
     p.add_argument("--verify", action="store_true", help="run the A7 verification gate after the import")
 
+
+def _rebuild_command(sub: Any) -> None:
+    """`loft rebuild` — replay the projections from the event log."""
     p = _command(
         sub,
         name="rebuild",
@@ -621,26 +640,47 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--path", default=str(default_database_path()))
 
-    p = _command(
+
+def _archive_command(
+    sub: Any,
+    *,
+    name: str,
+    help_text: str,
+    fn: Callable[[argparse.Namespace], int],
+    verify_help: str,
+) -> None:
+    """One of the archive's two directory writers (export, backup) — the same
+    --out/--path/--verify shape, with the command's own help and verifier."""
+    p = _command(sub, name=name, help_text=help_text, fn=fn)
+    p.add_argument("--out", required=True, help="an empty scratch directory; never the live tree")
+    p.add_argument("--path", default=str(default_database_path()))
+    p.add_argument("--verify", action="store_true", help=verify_help)
+
+
+def _export_command(sub: Any) -> None:
+    """`loft export` — the human archive."""
+    _archive_command(
         sub,
         name="export",
         help_text="write the human archive (the dated document leg, views, manifest)",
         fn=cmd_export,
+        verify_help="verify the written tree and manifest",
     )
-    p.add_argument("--out", required=True, help="an empty scratch directory; never the live tree")
-    p.add_argument("--path", default=str(default_database_path()))
-    p.add_argument("--verify", action="store_true", help="verify the written tree and manifest")
 
-    p = _command(
+
+def _backup_command(sub: Any) -> None:
+    """`loft backup` — the operational backup."""
+    _archive_command(
         sub,
         name="backup",
         help_text="write the operational backup (dump, content, events, schema)",
         fn=cmd_backup,
+        verify_help="restore the dump into a scratch DB and compare",
     )
-    p.add_argument("--out", required=True, help="an empty scratch directory; never the live tree")
-    p.add_argument("--path", default=str(default_database_path()))
-    p.add_argument("--verify", action="store_true", help="restore the dump into a scratch DB and compare")
 
+
+def _gedcom_command(sub: Any) -> None:
+    """`loft gedcom` — the interchange format's import and export."""
     p = sub.add_parser(
         "gedcom",
         help="GEDCOM 7.0 interchange — import a file into a folder (the island), or export its confirmed subset",
@@ -659,6 +699,22 @@ def build_parser() -> argparse.ArgumentParser:
     pe.add_argument("folder", help="the import folder to read")
     pe.add_argument("path", help="the GEDCOM file to write (must not exist)")
     pe.set_defaults(fn=cmd_gedcom, action="export")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="loft", description="The Loft archive tools — one surface.")
+    sub = parser.add_subparsers(dest="command", required=True)
+    _publish_command(sub)
+    _serve_command(sub)
+    _capture_memory_command(sub)
+    _work_command(sub)
+    _db_command(sub)
+    _verify_command(sub)
+    _migrate_command(sub)
+    _rebuild_command(sub)
+    _export_command(sub)
+    _backup_command(sub)
+    _gedcom_command(sub)
     return parser
 
 

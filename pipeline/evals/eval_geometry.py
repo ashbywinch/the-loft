@@ -14,7 +14,7 @@ pipeline's enhancement decisions.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import ceil
+from math import ceil, isfinite
 from typing import Any
 
 from pipeline.detection import Detection
@@ -58,11 +58,28 @@ class CropReading:
     the location report, per-crop: the model's geometry is trustworthy
     only when the question is LOCAL)."""
 
+    # the cut truncates a crop's float edges to pixels, so a side narrower than
+    # one pixel can truncate to none — and PIL refuses to write an empty image
+    _MIN_SIDE = 1.0
+
     x: float
     y: float
     w: float
     h: float
     lines: list[CropLine]
+
+    def __post_init__(self) -> None:
+        """A crop is a finite rectangle at least one pixel each way: a NaN, an
+        infinity, a zero/negative side, or a sub-pixel side is not a region the
+        page can be cut at. The edge float that would make ``int()`` raise or
+        PIL refuse is refused here, where the crop is built — not deep in the
+        reader as an exception the image boundary does not expect. The cut
+        truncates ``x`` and ``x + w``, so a sub-pixel side becomes an empty
+        image, which PIL refuses with a ``ValueError`` (not an ``OSError``)."""
+        if not all(isfinite(v) for v in (self.x, self.y, self.w, self.h)):
+            raise ValueError(f"a crop's rectangle must be finite: {(self.x, self.y, self.w, self.h)}")
+        if self.w < self._MIN_SIDE or self.h < self._MIN_SIDE:
+            raise ValueError(f"a crop must span at least one pixel each way: {self.w}x{self.h}")
 
 
 @dataclass(frozen=True)
@@ -462,7 +479,7 @@ class ClipLocation:
     eval's."""
 
     def __init__(self, batch_size: int) -> None:
-        self.batch_size = batch_size
+        self.batch_size: int = batch_size
 
     @staticmethod
     def __call__(fixture: Fixture) -> Layout:

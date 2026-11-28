@@ -57,8 +57,11 @@ class Schema:
         connection.commit()
 
     @classmethod
-    def verify(cls, connection: sqlite3.Connection) -> tuple[str, ...]:
-        """Return every way the database departs from the canonical schema."""
+    def verify(cls, connection: sqlite3.Connection, *, journal_mode: str = "wal") -> tuple[str, ...]:
+        """Return every way the database departs from the canonical schema.
+
+        `journal_mode` is the expected mode: a file database runs in WAL, and
+        an in-memory one reports `memory` (SQLite has no WAL to write)."""
         findings: list[str] = []
         installed = {(row[0], row[1]) for row in connection.execute("SELECT type, name FROM sqlite_master")}
         truth = _read(cls.TRUTH)
@@ -74,8 +77,8 @@ class Schema:
                     findings.append(f"missing {kind}: {name}")
 
         journal = connection.execute("PRAGMA journal_mode").fetchone()[0]
-        if str(journal).lower() != "wal":
-            findings.append(f"journal_mode is {journal!r}, not wal")
+        if str(journal).lower() != journal_mode:
+            findings.append(f"journal_mode is {journal!r}, not {journal_mode}")
         synchronous = connection.execute("PRAGMA synchronous").fetchone()[0]
         if synchronous != 2:
             findings.append(f"synchronous is {synchronous}, not 2 (FULL)")

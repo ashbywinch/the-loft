@@ -50,10 +50,10 @@ class SheetMap:
     zoom, and the caption bar the crop starts below."""
 
     def __init__(self, x0: float, y0: float, zoom: float, bar: float) -> None:
-        self.x0 = x0
-        self.y0 = y0
-        self.zoom = zoom
-        self.bar = bar
+        self.x0: float = x0
+        self.y0: float = y0
+        self.zoom: float = zoom
+        self.bar: float = bar
 
     def x(self, value: float) -> float:
         return (value * Components.SCALE - self.x0) * self.zoom

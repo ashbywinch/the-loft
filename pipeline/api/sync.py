@@ -332,7 +332,7 @@ class Outbox:
     _ITEM_ID = re.compile(r"^[A-Za-z0-9-]+$")
 
     def __init__(self, directory: Path) -> None:
-        self.directory = directory
+        self.directory: Path = directory
 
     def add(self, payload: dict[str, Any]) -> str:
         ConfirmationPayload.validate(payload)

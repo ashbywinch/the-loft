@@ -1,9 +1,10 @@
 """The store surface the identity service and its exporter need.
 
-`LiveStore` and `MemoryLiveStore` both implement it, so the service is typed
-against the contract rather than one implementation (TECHSPEC/08 §19.7). The
-members are `Any` on purpose: each repository's concrete type is the one the
-store exposes, and the contract suite pins the behaviour on both stores.
+`LiveStore` implements it — over a file database or an in-memory one — so the
+service is typed against the contract rather than a concrete store
+(TECHSPEC/08 §19.7). The members are `Any` on purpose: each repository's
+concrete type is the one the store exposes, and the contract suite pins the
+behaviour in both database modes.
 """
 
 from __future__ import annotations

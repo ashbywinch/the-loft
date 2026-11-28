@@ -63,9 +63,15 @@ class _NoLogError(Exception):
     cause it observed instead of guessing at one."""
 
 
-def _get_json(url: str, token: str, get: Callable[[str, str], bytes] = _get):
+def _get_json(url: str, token: str, get: Callable[[str, str], bytes] | None = None):
     """Fetch and parse one API response. The transport is the optional seam
-    (the repo's DI convention): tests inject a fake, production uses ``_get``."""
+    (the repo's DI convention): tests inject a fake, production uses ``_get``.
+
+    The default is resolved per call, not at definition time, so replacing the
+    transport module-wide reaches every caller — a bound default silently
+    ignores the replacement and the test then talks to the real API.
+    """
+    get = get or _get
     try:
         body = get(url, token)
     except HTTPError as e:  # a URLError subclass: check it first
@@ -108,11 +114,14 @@ class _ReviewGate:
         self,
         repo: str,
         token: str,
-        get_json: Callable[[str, str], Any] = _get_json,
+        get_json: Callable[[str, str], Any] | None = None,
     ):
-        self.repo = repo
-        self.token = token
-        self.get_json = get_json
+        self.repo: str = repo
+        self.token: str = token
+        # late-bound on purpose: the default has to be looked up when a gate is
+        # made, not when the function was defined, or a test (or a caller) that
+        # replaces the transport module-wide is silently ignored.
+        self.get_json: Callable[[str, str], Any] = get_json or _get_json
 
     def api(self, path: str):
         """GET a repository-relative API path."""
@@ -143,7 +152,10 @@ class _ReviewGate:
         matches = [j for j in jobs["jobs"] if _job_name_matches(j.get("name", ""), wanted)]
         if not matches:
             raise _NoLogError(f"the run lists no job named {wanted!r} (set REVIEW_JOB_NAME)")
-        req = _ApiRequest(f"https://api.github.com/repos/{self.repo}/actions/jobs/{matches[0]['id']}/logs", self.token)
+        req = _ApiRequest(
+            f"https://api.github.com/repos/{self.repo}/actions/jobs/{matches[0]['id']}/logs",
+            self.token,
+        )
         try:
             resp = _OPENER.open(req)
         except HTTPError as e:
@@ -159,6 +171,16 @@ class _ReviewGate:
                 raise _NoLogError("the log download answered a redirect with no Location") from e
             return urllib.request.urlopen(location, timeout=30).read().decode("utf-8", errors="replace")
         return resp.read().decode("utf-8", errors="replace")
+
+
+@dataclass(frozen=True)
+class _SizeLimit:
+    """The two numbers pr-agent's pruning line carries: the diff's size and the
+    cap it overran — separate fields, because a swapped pair would read as a
+    review that died for the wrong reason."""
+
+    tokens: str
+    limit: str
 
 
 class _BotLog:
@@ -179,27 +201,35 @@ class _BotLog:
     because those carry the words worth repeating.
     """
 
-    FAILURE_MARKERS = ("Failed to process the command.", "Traceback (most recent call last)")
+    FAILURE_MARKERS = (
+        "Failed to process the command.",
+        "Traceback (most recent call last)",
+    )
     # pr-agent logs this when a review ran and found nothing to publish: the
     # increment was examined and came back clean, which is a verdict, not silence.
     REVIEWED_NOTHING = "Review output is not published: no major issues detected."
-    SKIP_MARKERS = ("PR has no analyzable files", "skipping review", "skipping describe")
+
+    SKIP_MARKERS = (
+        "PR has no analyzable files",
+        "skipping review",
+        "skipping describe",
+    )
     TAIL_LINES = 12  # lines after a failure marker worth quoting
 
     def __init__(self, text: str) -> None:
-        self.text = text
-        self.structured = tuple(line for line in text.splitlines() if '"text"' in line)
-        self.over_size = self._first(_SIZE_RE)
-        self.failure = self._first_line(self.FAILURE_MARKERS)
-        self.skip = self._first_line(self.SKIP_MARKERS)
-        self.nothing_to_publish = self.REVIEWED_NOTHING in text
+        self.text: str = text
+        self.structured: tuple[str, ...] = tuple(line for line in text.splitlines() if '"text"' in line)
+        self.over_size: _SizeLimit | None = self._first(_SIZE_RE)
+        self.failure: str | None = self._first_line(self.FAILURE_MARKERS)
+        self.skip: str | None = self._first_line(self.SKIP_MARKERS)
+        self.nothing_to_publish: bool = self.REVIEWED_NOTHING in text
 
-    def _first(self, pattern: re.Pattern[str]) -> tuple[str, str] | None:
+    def _first(self, pattern: re.Pattern[str]) -> _SizeLimit | None:
         """The two numbers on the first line that carries the size marker."""
         for line in self.text.splitlines():
             match = pattern.search(line)
             if match:
-                return match.group(1), match.group(2)
+                return _SizeLimit(tokens=match.group(1), limit=match.group(2))
         return None
 
     def _first_line(self, markers: tuple[str, ...]) -> str | None:
@@ -235,10 +265,9 @@ class _BotLog:
         if not self.text:
             return "the bot's job log is empty: the step produced no output at all"
         if self.over_size is not None:
-            tokens, limit = self.over_size
             return (
-                f"the PR's cumulative diff is {tokens} tokens — over the bot's "
-                f"{limit}-token review cap; the review died after pruning the diff"
+                f"the PR's cumulative diff is {self.over_size.tokens} tokens — over the bot's "
+                f"{self.over_size.limit}-token review cap; the review died after pruning the diff"
             )
         if self.failure is not None:
             return f"the bot logged an error before dying: {self._quote(self.failure)}"
@@ -255,7 +284,10 @@ class _BotLog:
         is the quote. Falling back to the start of ``structured`` would print
         whichever lines happened to come first, which is somebody else's words.
         """
-        start = next((index for index, line in enumerate(self.structured) if marker_line in line), None)
+        start = next(
+            (index for index, line in enumerate(self.structured) if marker_line in line),
+            None,
+        )
         if start is None:
             return marker_line.split("\t")[-1][:200]
         tail = [line for line in self.structured[start : start + self.TAIL_LINES] if line.strip()]
@@ -270,6 +302,7 @@ class _Comment:
     created_at: str
     updated_at: str = ""
     user_type: str = "Bot"
+    commit_id: str = ""  # an inline finding names the commit it was made against
 
     @classmethod
     def from_json(cls, node: "Mapping[str, Any]") -> "_Comment":
@@ -279,6 +312,7 @@ class _Comment:
             node.get("created_at") or "",
             node.get("updated_at") or "",
             (node.get("user") or {}).get("type", ""),
+            node.get("original_commit_id") or node.get("commit_id") or "",
         )
 
 
@@ -393,10 +427,62 @@ def _a_finding_posted(inline: list[_Comment], run_started: str) -> bool:
     return any(_from_a_machine(c.user_type) and c.created_at >= run_started for c in inline)
 
 
+def _reviewed_since_unchanged(api: Callable[[str], Any], reviewed: list[str], head: str) -> str | None:
+    """The reviewed commit whose review still covers this head, if any.
+
+    Exists for the merge of a base branch: it changes none of the PR's files, so
+    the reviewer returns without publishing anything (no guide, no findings, no
+    log line) and a gate that only ever asks "did a review post for this head"
+    calls that unreviewed. If the tree has not moved since a commit that WAS
+    reviewed, that review still covers it — and the comparison is of files, not
+    of commit ids, so a rebase of identical content also holds.
+    """
+    for reviewed_sha in reviewed:
+        if not reviewed_sha or reviewed_sha == head:
+            continue
+        try:
+            compared = api(f"compare/{reviewed_sha}...{head}")
+        except _ApiError:
+            continue
+        # A body that is not an object — `null`, a list, a proxy's page — says
+        # nothing about the two trees either, so it is not coverage. And an
+        # EMPTY list, not merely a falsy value: only the API's own "no
+        # differences" statement counts, or an unreadable compare would pass a
+        # head nobody reviewed.
+        if isinstance(compared, dict) and compared.get("files") == []:
+            return reviewed_sha
+    return None
+
+
 def _review_covers(comments: list[_Comment], sha: str, run_started: str) -> bool:
     """Does any comment cover the head commit? Three forms count, one property each:
     a human skip, a guide for this head, or the bot's empty-increment skip."""
     return any(_Coverage(comment, run_started).covers(sha) for comment in comments)
+
+
+def _coverage_notice(
+    comments: list[_Comment],
+    inline: list[_Comment],
+    sha: str,
+    run_started: str,
+    api: Callable[[str], Any],
+) -> str | None:
+    """What covers this head, if anything: None when nothing does.
+
+    The three comment forms, the findings this run posted inline, or a review of
+    a commit the head has not changed away from. The string is the sentence to
+    print — empty for a plain cover, a reason for the unchanged case.
+    """
+    if _review_covers(comments, sha, run_started) or _a_finding_posted(inline, run_started):
+        return ""
+    reviewed = [c.commit_id for c in inline if c.commit_id and _from_a_machine(c.user_type)]
+    unchanged = _reviewed_since_unchanged(api, reviewed, sha)
+    if unchanged:
+        return (
+            f"no review posted for {sha} — nothing has changed since the review of "
+            f"{unchanged[:8]}, so that review covers this head."
+        )
+    return None
 
 
 def main() -> int:
@@ -446,32 +532,35 @@ def main() -> int:
     except _ApiError as e:
         print(f"::error::PR comments are not fetchable ({e}) — the review coverage cannot be checked.")
         return 1
-    if not _review_covers(comments, sha, reviewed_after) and not _a_finding_posted(inline, reviewed_after):
-        try:
-            log = gate.job_log()
-        except (_ApiError, _NoLogError, KeyError, URLError) as e:
-            print(
-                f"::error::AI review did not post for commit {sha} — the job log could not be "
-                f"read ({type(e).__name__}: {e}), so the reason is unknown."
-            )
-            return 1
-        log_read = _BotLog(log)
-        if log_read.nothing_to_publish:
-            print(
-                f"::notice::no review posted for {sha} — the reviewer examined the increment and "
-                "found nothing to publish. A clean review, not a failure."
-            )
-            return 0
-        if log_read.skipped:
-            print(
-                f"::notice::no review posted for {sha} — the reviewer found nothing it can "
-                "analyse in this PR. A clean skip, not a failure."
-            )
-            return 0
-        reason = log_read.reason
-        print(f"::error::AI review did not post for commit {sha} — {reason}.")
+    notice = _coverage_notice(comments, inline, sha, reviewed_after, gate.api)
+    if notice is not None:
+        if notice:
+            print(f"::notice::{notice}")
+        return 0
+    try:
+        log = gate.job_log()
+    except (_ApiError, _NoLogError, KeyError, URLError) as e:
+        print(
+            f"::error::AI review did not post for commit {sha} — the job log could not be "
+            f"read ({type(e).__name__}: {e}), so the reason is unknown."
+        )
         return 1
-    return 0
+    log_read = _BotLog(log)
+    if log_read.nothing_to_publish:
+        print(
+            f"::notice::no review posted for {sha} — the reviewer examined the increment and "
+            "found nothing to publish. A clean review, not a failure."
+        )
+        return 0
+    if log_read.skipped:
+        print(
+            f"::notice::no review posted for {sha} — the reviewer found nothing it can "
+            "analyse in this PR. A clean skip, not a failure."
+        )
+        return 0
+    reason = log_read.reason
+    print(f"::error::AI review did not post for commit {sha} — {reason}.")
+    return 1
 
 
 if __name__ == "__main__":

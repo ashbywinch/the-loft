@@ -34,6 +34,23 @@ class BatchState:
     content_changed: bool
     version: int = 0
 
+    def to_dict(self) -> dict[str, Any]:
+        """The batch as the event payload's wire record — the registry fields,
+        without the row's version (the event carries the version itself)."""
+        return {
+            "batch_id": self.batch_id,
+            "label": self.label,
+            "source": self.source,
+            "path": self.path,
+            "status": self.status,
+            "arrived_at": self.arrived_at,
+            "started_at": self.started_at,
+            "started_pid": self.started_pid,
+            "started_host": self.started_host,
+            "fingerprint": list(self.fingerprint),
+            "content_changed": self.content_changed,
+        }
+
 
 @dataclass(frozen=True)
 class ScanState:
@@ -46,6 +63,18 @@ class ScanState:
     path: str
     ordinal: int
     created_at: str
+
+    def to_dict(self) -> dict[str, Any]:
+        """The scan as the event payload's wire record."""
+        return {
+            "scan_id": self.scan_id,
+            "batch_id": self.batch_id,
+            "page_id": self.page_id,
+            "sha256": self.sha256,
+            "path": self.path,
+            "ordinal": self.ordinal,
+            "created_at": self.created_at,
+        }
 
 
 @dataclass(frozen=True)
@@ -119,7 +148,7 @@ class BatchProjection:
     """One connection's batch rows: the reader and the guarded writer."""
 
     def __init__(self, connection: sqlite3.Connection) -> None:
-        self.connection = connection
+        self.connection: sqlite3.Connection = connection
 
     def current_version(self, batch_id: str) -> int | None:
         row = self.connection.execute("SELECT version FROM batches WHERE batch_id = ?", (batch_id,)).fetchone()

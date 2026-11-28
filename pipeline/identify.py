@@ -74,10 +74,10 @@ Return ONLY this JSON: {"people": [{"name": string, "match": string|null, \
 """
 
     def __init__(self, *, item: Item, text: str, knowledge: Knowledge) -> None:
-        self._item = item
-        self._text = text
-        self._knowledge = knowledge
-        self._used = {person.id for person in knowledge.people} | {place.id for place in knowledge.places}
+        self._item: Item = item
+        self._text: str = text
+        self._knowledge: Knowledge = knowledge
+        self._used: set[str] = {person.id for person in knowledge.people} | {place.id for place in knowledge.places}
 
     def read(self, client: ChatClient) -> Identification:
         """The document's people and places, or a loud IdentificationError —

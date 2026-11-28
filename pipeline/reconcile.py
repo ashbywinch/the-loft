@@ -54,8 +54,8 @@ class _RunJournal:
     loop calls, not closures over the run's locals."""
 
     def __init__(self, reconciler: Reconciler, batch_id: str) -> None:
-        self.reconciler = reconciler
-        self.batch_id = batch_id
+        self.reconciler: Reconciler = reconciler
+        self.batch_id: str = batch_id
         self.done: list[str] = []
 
     def announce(self, name: str, reason: str) -> None:
@@ -82,10 +82,10 @@ class Reconciler:
         client: Callable[[str, str], str] | None = None,
         printed: Callable[[Path], Any] | None = None,
     ) -> None:
-        self.paths = paths
-        self.write_line = write_line
-        self.client = client
-        self.printed = printed  # the vision read's seam (page → (text, answer))
+        self.paths: LoftPaths = paths
+        self.write_line: Callable[[str], None] = write_line
+        self.client: Callable[[str, str], str] | None = client
+        self.printed: Callable[[Path], Any] | None = printed  # the vision read's seam (page → (text, answer))
 
     # ---- planning -------------------------------------------------------
     def plan(self) -> list[Plan]:

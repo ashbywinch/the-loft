@@ -29,8 +29,8 @@ class ItemCompatibility:
     CONTENT_KINDS: tuple[str, ...] = ("story", "transcription")
 
     def __init__(self, store: ItemStore, archive: Archive) -> None:
-        self.store = store
-        self.archive = archive
+        self.store: ItemStore = store
+        self.archive: Archive = archive
 
     def write(self, item_id: str) -> tuple[int, ...]:
         """Write the versions the tree is missing; return the versions written.

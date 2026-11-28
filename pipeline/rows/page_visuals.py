@@ -159,8 +159,8 @@ class PagePainter:
         page: Image.Image,
         strokes: Sequence[Sequence[tuple[float, float]]],
     ) -> None:
-        self._page = page
-        self._strokes = strokes
+        self._page: Image.Image = page
+        self._strokes: Sequence[Sequence[tuple[float, float]]] = strokes
 
     def draw_page(
         self,

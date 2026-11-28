@@ -53,8 +53,11 @@ if [ "$(git rev-parse HEAD)" = "$before" ]; then
     exit 1
 fi
 
+# Only the FIRST line is the subject: a caller may pass "subject" plus a blank
+# line and a body, which git keeps as the message but reports only the first
+# line of through %s.
 landed="$(git log -1 --format=%s | sed 's/[[:space:]]*$//')"
-wanted="$(printf '%s' "$subject" | sed 's/[[:space:]]*$//')"
+wanted="$(printf '%s\n' "$subject" | head -n 1 | sed 's/[[:space:]]*$//')"
 if [ "$landed" != "$wanted" ]; then
     echo "the commit landed as '$landed', not '$wanted'" >&2
     exit 1

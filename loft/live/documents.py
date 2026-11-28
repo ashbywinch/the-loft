@@ -29,8 +29,8 @@ class Documents:
     """The document collection: read through the store, write through a change."""
 
     def __init__(self, connection: sqlite3.Connection, change: Change | None = None) -> None:
-        self.projection = DocumentProjection(connection)
-        self.change = change
+        self.projection: DocumentProjection = DocumentProjection(connection)
+        self.change: Change | None = change
 
     # -- reads -------------------------------------------------------------
 
@@ -113,30 +113,11 @@ class Documents:
 def document_payload(document: DocumentState, pages: tuple[str, ...]) -> str:
     """The event payload: the document and its page order."""
     return json.dumps(
-        {"document": _document_dict(document), "pages": list(pages)},
+        {"document": document.to_dict(), "pages": list(pages)},
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=False,
     )
-
-
-def _document_dict(document: DocumentState) -> dict[str, Any]:
-    return {
-        "document_id": document.document_id,
-        "item_id": document.item_id,
-        "batch_id": document.batch_id,
-        "doc_index": document.doc_index,
-        "title": document.title,
-        "date_json": document.date_json,
-        "date": document.date,
-        "date2": document.date2,
-        "date_precision": document.date_precision,
-        "status": document.status,
-        "greeting": document.greeting,
-        "signoff": document.signoff,
-        "text_sha": document.text_sha,
-        "confirmed_at": document.confirmed_at,
-    }
 
 
 def document_from_payload(payload: dict[str, Any], version: int) -> tuple[DocumentState, tuple[DocumentPage, ...]]:

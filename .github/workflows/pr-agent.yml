@@ -24,7 +24,6 @@ jobs:
       contents: read
       pull-requests: write
       issues: write
-      checks: write # the bot publishes its review as a check run (github.publish_as_check_run)
     steps:
       # NO actions/checkout here — deliberate. PR-Agent fetches everything via
       # the GitHub API (the pinned config branch, the diff, the repo context

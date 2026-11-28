@@ -14,6 +14,7 @@ the item.
 | `REWRITE-PLAN.md` | the rewrite's order — the database as the system of record: phases A–F, one increment per PR, each with its gate |
 | `PLAN.md` | the large-scale product plan — the full PRD: slices 1–6, feature inventory, per-slice status; the rewrite order is `REWRITE-PLAN.md` |
 | `WORK-PLAN.md` | the small-scale plan — the work remaining on the active subset (the ingest → transcription → identity pipeline), ordered with acceptance; §5 is the rewrite's acceptance corpus |
+| `review-backlog.md` | the whole-repo review's open findings — what remains, where, and the fix bundles; the fixed round is recorded at its end |
 | `SCRAPS.md` | loose ends that fit neither plan |
 
 ## Design and work records

@@ -161,11 +161,11 @@ class Batch:
         registry_dir: Path = LoftPaths.REGISTRY_DIR,
         archive_dir: Path = LoftPaths.ARCHIVE_DIR,
     ) -> None:
-        self.batch_id = batch_id
-        self.work_dir = work_dir
-        self.registry_dir = registry_dir
-        self.archive_dir = archive_dir
-        self.artefacts = BatchArtefacts(work_dir, batch_id)
+        self.batch_id: str = batch_id
+        self.work_dir: Path = work_dir
+        self.registry_dir: Path = registry_dir
+        self.archive_dir: Path = archive_dir
+        self.artefacts: BatchArtefacts = BatchArtefacts(work_dir, batch_id)
 
     def update_status(self, record: BatchRecord, status: str) -> None:
         """Stamp the registry record's status and persist it. A processing pass

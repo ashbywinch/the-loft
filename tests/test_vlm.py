@@ -11,6 +11,8 @@ from pathlib import Path
 import pytest
 
 import pipeline.model.vlm as vlm
+from pipeline.model.ai_client import AIClient
+from pipeline.model.config import ModelConfig
 from pipeline.model.token_usage import TokenUsage
 from pipeline.model.unsure_word import UnsureWord
 from pipeline.model.vlm import (
@@ -158,6 +160,29 @@ class TestParseTranscriptionResponse:
         assert reading.text == "first\nthird"
         assert reading.boxes == {0: [0.0, 0.0, 10.0, 10.0], 1: [20.0, 20.0, 30.0, 30.0]}
 
+    def test_boxed_lines_pair_each_box_with_its_own_text(self) -> None:
+        """The text/box pairing is the transcription's own: a line the model
+        measured no usable box for is absent, and every returned pair is a real
+        line — the caller never splits the text and never computes an index that
+        could point past it."""
+        from pipeline.model.transcription import TranscribedLine
+        from pipeline.model.vlm import parse_transcription_response
+
+        text = json.dumps(
+            {
+                "lines": [
+                    {"text": "first", "box": [0, 0, 10, 10]},
+                    {"text": "unmeasured"},
+                    {"text": "third", "box": [20, 20, 30, 30]},
+                ]
+            }
+        )
+        reading = parse_transcription_response(text)
+        assert reading.boxed_lines() == [
+            TranscribedLine(text="first", box=[0.0, 0.0, 10.0, 10.0]),
+            TranscribedLine(text="third", box=[20.0, 20.0, 30.0, 30.0]),
+        ]
+
     def test_missing_or_bad_boxes_dropped_geometry(self) -> None:
         from pipeline.model.vlm import parse_transcription_response
 
@@ -171,6 +196,17 @@ class TestParseTranscriptionResponse:
 
         reading = parse_transcription_response("I could not read the page")
         assert reading.text == "I could not read the page"
+        assert reading.boxes is None
+
+    def test_an_answer_that_does_not_fit_the_structure_has_no_failing_arm(self) -> None:
+        """The parse returns a Transcription for every answer (its docstring):
+        JSON in the wrong shape is a reading without boxes, never a raise — so
+        a caller cannot be handed a failure it mistakes for a read."""
+        from pipeline.model.vlm import parse_transcription_response
+
+        wrong_shape = json.dumps({"lines": ["not an entry"]})
+        reading = parse_transcription_response(wrong_shape)
+        assert reading.text == wrong_shape  # the plain-text fallback
         assert reading.boxes is None
 
     def test_collapsed_bottom_boxes_dropped(self) -> None:
@@ -190,6 +226,26 @@ class TestParseTranscriptionResponse:
         # the sliver is < a third of the median height — dropped, the line
         # falls back to the detector's association
         assert reading.boxes == {0: [10.0, 10.0, 900.0, 100.0], 1: [10.0, 110.0, 900.0, 200.0]}
+
+    def test_zero_area_boxes_dropped(self) -> None:
+        """A box with no area is not a measurement: a zero-width box would make
+        `_is_vertical` read `height > 0` and call upright text vertical. The
+        transcription keeps only boxes that enclose area, so no reader has to
+        guard against the degenerate shape."""
+        from pipeline.model.vlm import parse_transcription_response
+
+        text = json.dumps(
+            {
+                "lines": [
+                    {"text": "a real line", "box": [10, 10, 900, 100]},
+                    {"text": "a zero-width sliver", "box": [500, 200, 500, 400]},
+                    {"text": "a reversed box", "box": [900, 500, 100, 600]},
+                ]
+            }
+        )
+        reading = parse_transcription_response(text)
+        assert reading.text == "a real line\na zero-width sliver\na reversed box"
+        assert reading.boxes == {0: [10.0, 10.0, 900.0, 100.0]}
 
 
 class TestTranscriptionProblem:
@@ -255,6 +311,43 @@ class TestPlainTranscriptionFormat:
         # every existing caller keeps today's behaviour
         assert '"lines"' in VlmPrompts.SYSTEM
         assert '"lines"' in VlmPrompts.transcription_system_with_context()
+
+
+class TestVlmOptions:
+    """The bare options are the crop read's defaults (the eval's ``run``
+    takes them when it is given none), and an unnamed base URL is the
+    gateway's — never an empty endpoint."""
+
+    def test_bare_options_are_the_crop_reads_defaults(self) -> None:
+        options = VlmOptions()
+        assert options.model == ModelConfig.VISION_MODEL
+        assert options.endpoint == AIClient.DEFAULT_BASE_URL
+        assert options.api_key is None
+
+    def test_a_stated_base_url_is_the_endpoint(self) -> None:
+        assert VlmOptions(base_url="https://openrouter.ai/api/v1").endpoint == "https://openrouter.ai/api/v1"
+
+    def test_an_empty_base_url_falls_back_to_the_gateway(self) -> None:
+        # "" means no endpoint named, exactly as None does (the client's own
+        # rule) — a caller that resolves an absent flag to "" still reaches it
+        assert VlmOptions(base_url="").endpoint == AIClient.DEFAULT_BASE_URL
+
+    def test_a_blank_model_is_refused(self) -> None:
+        # a read with no model has nothing to call: the value cannot be built,
+        # so no caller can name a trial (or an output file) after nothing
+        with pytest.raises(ValueError, match="needs a model"):
+            VlmOptions(model="")
+        with pytest.raises(ValueError, match="needs a model"):
+            VlmOptions(model="   ")
+
+    def test_the_model_slug_names_the_trials_files(self) -> None:
+        """The experiments save one reading per model, so the model's name is
+        the file's own part; a name that reduces to nothing cannot name a file."""
+        assert VlmOptions(model="z-ai/glm-4.6v").model_slug == "z-ai-glm-4.6v"
+        assert VlmOptions(model="openai/gpt@2026").model_slug == "openai-gpt2026"
+        unnamed = VlmOptions(model="@")
+        with pytest.raises(ValueError, match="names no output file"):
+            _ = unnamed.model_slug
 
 
 class TestTranscribeWithFallbacks:
@@ -365,6 +458,8 @@ class _BytesResponse:
 
     def __init__(self, body: bytes) -> None:
         self._body = body
+        self.status = 200
+        self.headers: dict[str, str] = {}
 
     def __enter__(self) -> _BytesResponse:
         return self
@@ -374,6 +469,23 @@ class _BytesResponse:
 
     def read(self) -> bytes:
         return self._body
+
+
+class TestUnreadableBody:
+    """A 200 with no JSON is the endpoint failing, not a transcription."""
+
+    def test_a_blank_body_is_a_vlm_error_naming_the_status(self, tmp_path: Path) -> None:
+        def fake_urlopen(request, timeout=None):
+            return _BytesResponse(b"  \n ")
+
+        with pytest.raises(vlm.VlmError, match="no JSON"):
+            vlm.transcribe_image_vlm(
+                TestThinkingDisabled._png(tmp_path),
+                model="dynamic/image",
+                base_url="http://x/v1",
+                api_key="k",
+                urlopen=fake_urlopen,
+            )
 
 
 class TestThinkingDisabled:

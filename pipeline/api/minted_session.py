@@ -18,8 +18,8 @@ class MintedSession:
     GRACE_SECONDS = 180
 
     def __init__(self, user: SessionUser, minted_at: float) -> None:
-        self.user = user
-        self.minted_at = minted_at
+        self.user: SessionUser = user
+        self.minted_at: float = minted_at
 
     @classmethod
     def minted(cls, user: SessionUser) -> MintedSession:

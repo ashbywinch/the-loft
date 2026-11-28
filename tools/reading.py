@@ -27,7 +27,7 @@ class Block:
     block's lines."""
 
     def __init__(self, lines: Sequence[LayoutLine]) -> None:
-        self.lines = list(lines)
+        self.lines: list[LayoutLine] = list(lines)
 
     @property
     def top(self) -> float:

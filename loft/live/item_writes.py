@@ -22,7 +22,7 @@ class ItemWrites:
     """The item write surface: the archive's save/delete/agreement verbs."""
 
     def __init__(self, store: ItemStore) -> None:
-        self.store = store
+        self.store: ItemStore = store
 
     def get(self, item_id: str) -> Item | None:
         with self.store.lock:

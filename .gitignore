@@ -10,13 +10,13 @@
 *.keystore
 
 # deps
-.venv/
+.venv
 venv/
 # the gate's system tools (tesseract + ImageMagick) — project-local, never committed
 .conda-tools/
 # the Python 3.13 HTR venv (kraken + orli) — 5GB+, never committed
 .venv-htr/
-node_modules/
+node_modules
 
 # caches
 __pycache__/
@@ -71,7 +71,7 @@ docs/wireframes/
 
 # The lucidlint code-health gate — the self-contained release bundle the
 # make target downloads from github.com/ashbywinch/lucidlint (2026-08-16).
-lucidlint-dist/
+lucidlint-dist
 .lucidlint-cache/
 
 # The eval runs' generated artifacts — model answers and page renders of a
@@ -79,3 +79,6 @@ lucidlint-dist/
 # transcript eval. They are outputs, not fixtures: the public repo never
 # ships them (2026-11-13). The archive's real work tree is on the big disk.
 work/
+
+# the lucidlint bundle unpacked by `make install-lucidlint`; worktrees symlink it
+.tools

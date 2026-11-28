@@ -25,7 +25,7 @@ class Words:
     _FIELDS: ClassVar[tuple[str, ...]] = ("x0", "y0", "x1", "y1", "line", "baseline", "waistline")
 
     def __init__(self, words: list[Word]) -> None:
-        self.words = list(words)
+        self.words: list[Word] = list(words)
 
     def __iter__(self) -> Iterator[Word]:
         return iter(self.words)

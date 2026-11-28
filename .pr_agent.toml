@@ -38,15 +38,15 @@ repo_context_files = [
 
 
 [pr_reviewer]
-# A full review on every push: that path is the only one that publishes the
-# "PR Agent - Review" check run (pr_reviewer.run reaches _publish_check_run only
-# on the persistent, non-incremental branch), and the check run is the gate's
-# coverage artifact. With publish_as_check_run the review is published AS the
-# check run — the PR comment is not updated, so read the review under Checks.
-# Incremental reviews publish no check run, and their anchor is the previous
-# review comment's created_at — a commit pushed while a review runs is then
-# never read (it lands before the next anchor, and the next run skips as "no
-# new files").
+# A push reviews the commits since the last review (`/review -i`, set below),
+# not the whole diff again. Coverage is proved by the gate's comment rule
+# (pipeline/evals/check_review_posted.py): a guide naming the head sha, a guide
+# posted or edited after this run started, the bot's own "Incremental Review
+# Skipped" (nothing changed since the last review), or a human /skip. The
+# check run is NOT the signal — the pinned action publishes it only on the
+# non-incremental path (pr_reviewer.py:420, inside `elif persistent_comment and
+# not is_incremental`), so demanding one forced a full review of the whole diff
+# on every push and re-derived findings that earlier rounds had settled.
 persistent_comment = true
 require_tests_review = true
 require_security_review = true
@@ -58,6 +58,10 @@ num_max_findings = 20
 # Publish each finding as a verified inline review comment (the pinned action
 # implements get_persistent_comment_bodies/get_recent_inline_comment_bodies).
 inline_key_issues = true
+# Fingerprint an inline finding so the identical one is never re-posted on a
+# later push. Without it a full re-review re-posts the same finding on the same
+# line: nine copies of one sentence arrived in a single review on #160.
+persistent_inline_comments = true
 extra_instructions = """
 - **Scope.** Read the diff against the files in repo_context_files. Cite the file that states a rule when you invoke it, and never call something compliant without checking it there. Each violation is its own finding with path:line.
 - **Vocabulary.** Glossary: docs/PRD/PRD.md and docs/object-model.md. Judge a name in the domain of the code that holds it — the reader, the layout, the live store and the evals each own their terms. Report a name that contradicts the model, or that is not a term of its domain where one exists. Never report absence: the model holds the concepts a reader cannot infer and the word two concepts might share, not every identifier.
@@ -88,23 +92,22 @@ handle_push_trigger = true
 # would silently never review its pushes (the fail-loud verify job caught it:
 # "Skipping synchronize: bot commit detected"). Review every push.
 push_trigger_ignore_bot_commits = false
-# A full review on every push, no -i: the check run is only published on the
-# non-incremental path (see [pr_reviewer]), so an incremental review would
-# leave the gate red. A PR whose cumulative diff outgrows the 128k token cap
-# dies at pruning and fails the gate with the size reason — the cap is the
-# limit to fix, not the incremental flag.
+# A push reviews the commits since the last review: `/review -i` is the
+# incremental form (pr_reviewer.parse_incremental), and the gate counts the
+# resulting comment as coverage. A PR whose cumulative diff outgrows the token
+# cap no longer dies on a full re-read of a diff it already reviewed — each
+# push reads only its own commits.
 # /improve has NO incremental support in any pr-agent version (verified
 # v0.41.1 and main: pr_code_suggestions has no incremental machinery, and
 # -i on it is a no-op) — it is a full-PR pass by upstream design.
-push_commands = ["/review"]
+push_commands = ["/review -i"]
 skip_commands = ["/skip"]
 
 
 [github]
-# Publish the review as a completed "PR Agent - Review" check run on the head
-# SHA — the gate's coverage signal (pipeline/evals/check_review_posted.py). The
-# check run exists only when the review text was in hand; without it the gate
-# can only read comments, and a cancelled run's guide reads exactly like a
-# completed review. The review text caps at 65,535 characters; the tail is
-# dropped on a review that large.
-publish_as_check_run = true
+# A review is published as the "PR Reviewer Guide" comment, never as a check
+# run. The check run replaces the comment rather than joining it, so with it on
+# a full review — which is what a force-push or a first review produces, since
+# there is no previous review to increment from — leaves no comment for the
+# coverage gate to read.
+publish_as_check_run = false

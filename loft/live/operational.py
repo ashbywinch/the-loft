@@ -103,8 +103,8 @@ class OperationalBackup:
     SCHEMA_FILE = "migrations/0001.sql"
 
     def __init__(self, store: LiveStore, out: Path) -> None:
-        self.store = store
-        self.out = out
+        self.store: LiveStore = store
+        self.out: Path = out
 
     def write(self) -> BackupReport:
         """Write the operational backup to the scratch path.

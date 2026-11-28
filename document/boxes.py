@@ -20,8 +20,8 @@ class Boxes:
     """The page's boxes and the page size they are measured in — boxes.json."""
 
     def __init__(self, page: PageSize, boxes: list[Box]) -> None:
-        self.page = page
-        self.boxes = list(boxes)
+        self.page: PageSize = page
+        self.boxes: list[Box] = list(boxes)
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Boxes:

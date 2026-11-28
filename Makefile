@@ -57,17 +57,23 @@ app-build:
 	@$(NPM) run build
 
 serve: setup
-	@./scripts/loft serve --host 0.0.0.0 --port 8000 --reload
+	@set -a; [ -f .env ] && . ./.env; set +a; ./scripts/loft serve --host 0.0.0.0 --port 8000 --reload
 
+
+# ruff's scope: every Python package in the tree. The pre-commit hooks check
+# these dirs; a narrower local target lets a file here fail the hook while
+# `make lint` said it was fine (measured: loft/ and pipeline/ were never linted
+# locally, so the first commit touching them was refused by the hook).
+PY_DIRS := loft/ pipeline/ tools/ tests/ scripts/
 
 lint: setup
-	@$(RUFF) check tools/ tests/
-	@$(PYTHON) -m compileall -q tools/  # a parse error survives ruff/pyrefly — compile it (2026-08-06)
+	@$(RUFF) check $(PY_DIRS)
+	@$(PYTHON) -m compileall -q $(PY_DIRS)  # a parse error survives ruff/pyrefly — compile it
 	@$(PYTHON) -c "from pathlib import Path; css = Path('app/styles.css').read_text(); a, b = css.count('{'), css.count('}'); assert a == b, f'app/styles.css has {a} open and {b} close braces — an unclosed block swallows everything after it (2026-08-16: a mangled .rv-txa block hid the portrait media query and most review styles)'"
 	@$(NPM) run lint
 
 lint-github: setup
-	@$(RUFF) check tools/ tests/ --output-format=github
+	@$(RUFF) check $(PY_DIRS) --output-format=github
 	@$(NPM) run lint
 
 typecheck: setup
@@ -180,8 +186,8 @@ eval-changed: setup
 	fi
 
 format: setup
-	@$(RUFF) check --fix tools/ tests/
-	@$(RUFF) format tools/ tests/
+	@$(RUFF) check --fix $(PY_DIRS)
+	@$(RUFF) format $(PY_DIRS)
 	@$(NPM) run format
 
 scan-docs: setup

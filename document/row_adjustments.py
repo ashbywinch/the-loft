@@ -24,7 +24,7 @@ class RowAdjustments:
     """The reviewer's drawn row lines — the row-adjustments artefact."""
 
     def __init__(self, lines: RowLines) -> None:
-        self.lines = lines
+        self.lines: RowLines = lines
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> RowAdjustments:

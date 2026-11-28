@@ -19,8 +19,8 @@ class ImportsCompatibility:
     """Rebuild `imports.json` from the live review sessions."""
 
     def __init__(self, store: ItemStore, archive: Archive) -> None:
-        self.store = store
-        self.archive = archive
+        self.store: ItemStore = store
+        self.archive: Archive = archive
 
     def write(self) -> bool:
         """Write a new imports-table version when the store's sessions moved."""

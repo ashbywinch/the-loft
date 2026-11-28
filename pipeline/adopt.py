@@ -77,16 +77,18 @@ class _Adoption:
         registry_dir: Path = LoftPaths.REGISTRY_DIR,
         work_dir: Path = LoftPaths.WORK_DIR,
     ) -> None:
-        self.folder = folder
+        self.folder: Path = folder
         files = self.page_files()
         if not files:
             raise AdoptionError(f"no page images found in {folder}")
-        self.label = label
-        self.source = source
-        self.registry_dir = registry_dir
-        self.work_dir = work_dir
-        self.pages = {str(p.relative_to(folder)): hashlib.sha256(p.read_bytes()).hexdigest() for p in files}
-        self.fingerprint = sorted(self.pages.values())
+        self.label: str = label
+        self.source: str = source
+        self.registry_dir: Path = registry_dir
+        self.work_dir: Path = work_dir
+        self.pages: dict[str, str] = {
+            str(p.relative_to(folder)): hashlib.sha256(p.read_bytes()).hexdigest() for p in files
+        }
+        self.fingerprint: list[str] = sorted(self.pages.values())
 
     def page_files(self) -> list[Path]:
         """The adoption's folder's page images, recursively, in name order."""

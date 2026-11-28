@@ -1090,6 +1090,11 @@ class Item:
     def org_refs(self) -> tuple[Ref, ...]:
         return _refs(self.raw, "orgs")
 
+    def pending_refs(self) -> int:
+        """How many of the item's entity refs still wait on a decision — a
+        confirmed or guessed ref is settled; 'left for later' stays proposed."""
+        return sum(1 for ref in self.people_refs + self.place_refs if ref.status == "proposed")
+
     @property
     def item_refs(self) -> tuple[Ref, ...]:
         return _refs(self.raw, "items")

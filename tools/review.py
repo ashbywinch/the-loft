@@ -18,6 +18,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import Any, Protocol
 
+from loft.live.text_index import TextIndex
 from pipeline.model.ai_client import AIClientError, json_object
 from tools.decision_basis import DecisionBasis
 from tools.item_hit import ItemHit
@@ -217,23 +218,33 @@ class _ReviewTools:
         return results or ToolNote("no recorded items mention this person")
 
     def search_items(self, args: SearchQueryArgs) -> ToolResult:
-        """The recorded items whose text mentions the query — follow a place
-        or an event the reviewer brings up (a visit, a town, a death)."""
-        if not args.query:
-            return ToolError("query required")
-        hits: list[ToolEntry] = []
-        for it in self._facts.items:
-            text = it.get("story") or it.get("transcription") or ""
-            if args.query in text.lower():
-                hits.append(
-                    ItemHit(
-                        id=it["id"],
-                        title=it["title"],
-                        draft=it.get("transcription_status") == "draft",
-                        quotes=tuple(_relevant_sentences(text, (args.query,))),
+        """The recorded items that mention every word of the query — follow a
+        place or an event the reviewer brings up (a visit, a town, a death).
+
+        Words, not a phrase: "walter 1917" finds the war record, where a
+        substring test finds nothing. Quotes and operators are punctuation."""
+        terms = TextIndex.terms(args.query)
+        if not terms:
+            return ToolError("query required: one or more words")
+        by_id = {str(it["id"]): it for it in self._facts.items if it.get("story") or it.get("transcription")}
+        index = TextIndex(
+            (doc_id, (it.get("story") or "") + "\n" + (it.get("transcription") or "")) for doc_id, it in by_id.items()
+        )
+        hits: list[ToolEntry] = [
+            ItemHit(
+                id=doc_id,
+                title=by_id[doc_id]["title"],
+                draft=by_id[doc_id].get("transcription_status") == "draft",
+                quotes=tuple(
+                    _relevant_sentences(
+                        (by_id[doc_id].get("story") or "") + "\n" + (by_id[doc_id].get("transcription") or ""),
+                        tuple(terms),
                     )
-                )
-        return hits[:5] or ToolNote(f"no recorded items mention {args.query!r}")
+                ),
+            )
+            for doc_id, _rank in index.search(args.query, limit=5)
+        ]
+        return hits or ToolNote(f"no recorded item mentions all of: {', '.join(terms)} — try fewer words")
 
 
 def _wire_result(result: ToolResult | ToolEntry) -> Any:

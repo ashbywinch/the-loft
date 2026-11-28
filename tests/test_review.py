@@ -15,8 +15,9 @@ from tools.item_hit import ItemHit
 from tools.memory import ElicitationError
 from tools.person_id_args import PersonIdArgs
 from tools.records import Person, ReviewContext
-from tools.review import ToolResult, investigate, run_tool, steer_message
+from tools.review import ToolNote, ToolResult, investigate, run_tool, steer_message
 from tools.review_verdict import ReviewVerdict
+from tools.search_query_args import SearchQueryArgs
 from tools.trace_step import TraceStep
 
 PEOPLE: list[dict[str, Any]] = [
@@ -654,3 +655,28 @@ def test_persona_guard_error_carries_the_full_text() -> None:
     assert len(question) > 80, "the fixture must exceed the old truncation bound"
     errors = persona_errors(ReviewVerdict.from_dict({"relevant": "true", "question": question}))
     assert errors == [f"question echoes the system ('awaiting'): {question}"]
+
+
+def test_search_items_finds_the_words_wherever_they_sit() -> None:
+    """The review's searches are words, not phrases: "walter 1917" answers with
+    the war record, though those words are never adjacent in its text. A
+    substring test finds nothing, which reads to the model as "keep trying"."""
+    hits = _item_hits(run_tool("search_items", SearchQueryArgs(query="walter 1916"), make_facts()))
+    assert [hit.id for hit in hits] == ["item-war-record"]
+
+
+def test_search_items_ignores_quotes_and_operators() -> None:
+    """A caller writes search-engine syntax. Quoting and operators are
+    punctuation here, never a query language the index could fail to parse."""
+    hits = _item_hits(run_tool("search_items", SearchQueryArgs(query='"Walter Whitlock" AND died'), make_facts()))
+    assert [hit.id for hit in hits] == ["item-war-record"]
+
+
+def test_search_items_says_what_missed_and_what_to_do() -> None:
+    """A miss teaches the caller: which words were searched, and the move that
+    finds something (fewer words). Silence, or a bare "no results", sends the
+    model into rephrasing loops."""
+    result = run_tool("search_items", SearchQueryArgs(query="zzz nowhere"), make_facts())
+    assert isinstance(result, ToolNote), result
+    assert "zzz, nowhere" in result.note
+    assert "fewer words" in result.note

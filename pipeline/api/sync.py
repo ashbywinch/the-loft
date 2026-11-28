@@ -1106,7 +1106,7 @@ def reprocess_page_transcription(
             places=places,
         )
         set_page_job(batch_id, page, None, work_dir)
-    # lucidlint: ignore broad-except the stage's terminal boundary — mark failed on ANY error, then re-raise
+    # the stage's terminal boundary — mark failed on ANY error, then re-raise
     except Exception:
         set_page_job(batch_id, page, "failed", work_dir)
         raise

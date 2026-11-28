@@ -81,7 +81,10 @@ class LiveDatabase:
         The same DDL, triggers and pragmas as `create`, over SQLite's in-memory
         engine: transactions, constraints and the hash chain are the ones the
         file store runs, not a fake. In-memory SQLite has no WAL (it reports
-        `memory`), so the schema check expects that mode here.
+        `memory`), so the schema check expects that mode here. The connection
+        model is `create`'s (see the class docstring): one connection opened
+        with `check_same_thread=False`, and the store's change lock serializes
+        the writes.
         """
         connection = sqlite3.connect(":memory:", isolation_level=None, check_same_thread=False)
         connection.row_factory = sqlite3.Row

@@ -250,15 +250,22 @@ def _merge_records(filename: str, key: str, records: tuple[Person | Place, ...],
     atomic_write(path, json.dumps(data, indent=1, ensure_ascii=False))
 
 
-def _narrator_or_401(
-    narrator: Callable[[Request], Narrator | None], request: Request, *, message: str
-) -> Narrator | JSONResponse:
-    """The signed-in narrator, or the route's 401 — the auth boundary is the
-    absent case, and a stand-in would hide it (docs/coding-standards.md)."""
-    mine = narrator(request)
-    if mine is None:
-        return JSONResponse(ErrorAnswer(message).to_dict(), status_code=401)
-    return mine
+class _UnauthorizedError(Exception):
+    """The auth boundary is absent — the app's handler renders the one 401."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message: str = message
+
+
+def _require_signed_in[T](get: Callable[[Request], T | None], request: Request, *, message: str) -> T:
+    """The signed-in value the getter returns, or the 401 the app's handler
+    renders — the auth boundary is the absent case, and a stand-in would hide
+    it (docs/coding-standards.md)."""
+    value = get(request)
+    if value is None:
+        raise _UnauthorizedError(message)
+    return value
 
 
 @dataclass
@@ -464,9 +471,7 @@ class _Routes:
 
         @app.post("/api/save", response_model=None)
         def save(request: Request, body: Mapping[str, Any]) -> dict[str, Any] | JSONResponse:
-            mine = _narrator_or_401(narrator, request, message="sign in to tell a story")
-            if isinstance(mine, JSONResponse):
-                return mine
+            mine = _require_signed_in(narrator, request, message="sign in to tell a story")
             fields = SaveRequest.from_dict(body)
             # typed answers to date questions arrive as pending facts (value
             # null) — the model asserts their value/precision, the library
@@ -511,9 +516,7 @@ class _Routes:
         def delete(request: Request, body: Mapping[str, Any]) -> dict[str, Any] | JSONResponse:
             """Abandon: the draft is superseded with a tombstone — append-only,
             the files stay, the newest version says deleted (user)."""
-            mine = _narrator_or_401(narrator, request, message="sign in to tell a story")
-            if isinstance(mine, JSONResponse):
-                return mine
+            mine = _require_signed_in(narrator, request, message="sign in to tell a story")
             try:
                 fields = DeleteRequest.from_dict(body)
             except ValueError as exc:
@@ -537,9 +540,7 @@ class _Routes:
             attempt-separated: a fresh attempt starts only when
             the last is empty or finished, so a mid-walk re-render continues
             the same walk and the diagnosis never mixes attempts."""
-            mine = _narrator_or_401(narrator, request, message="sign in to review the import")
-            if isinstance(mine, JSONResponse):
-                return mine
+            _require_signed_in(narrator, request, message="sign in to review the import")
             try:
                 fields = ReviewStartRequest.from_dict(body)
             except ValueError as exc:
@@ -564,9 +565,7 @@ class _Routes:
             """Record one of the app's own rendered lines (the opening, the
             claim) so the transcript is exactly what the family saw (user:
             "when you load a given transcript, you see exactly what I saw")."""
-            mine = _narrator_or_401(narrator, request, message="sign in to review the import")
-            if isinstance(mine, JSONResponse):
-                return mine
+            _require_signed_in(narrator, request, message="sign in to review the import")
             try:
                 fields = ReviewMessageRequest.from_dict(body)
             except ValueError as exc:
@@ -599,9 +598,7 @@ class _Routes:
             pending (→ the import's guess stays proposed), delete (→ gone).
             The decision vocabulary is NOT the status vocabulary: "confirm" is
             a status, never an action."""
-            mine = _narrator_or_401(narrator, request, message="sign in to review the import")
-            if isinstance(mine, JSONResponse):
-                return mine
+            mine = _require_signed_in(narrator, request, message="sign in to review the import")
             try:
                 fields = ReviewDecideRequest.from_dict(body)
             except ValueError as exc:
@@ -682,9 +679,7 @@ class _Routes:
             the proposed record and is recorded verbatim) or off-topic (the
             chat names the mismatch and steers back). The model never derives
             relationships — the reviewer's words are the record or nothing is."""
-            mine = _narrator_or_401(narrator, request, message="sign in to review the import")
-            if isinstance(mine, JSONResponse):
-                return mine
+            mine = _require_signed_in(narrator, request, message="sign in to review the import")
             try:
                 fields = ReviewTextRequest.from_dict(body)
             except ValueError as exc:
@@ -848,8 +843,7 @@ class _Routes:
             """Every adopted batch, newest first — the review surface's batch
             list (the batch label + status ride the registry record), each with
             the pages waiting in the "Check the rows" queue."""
-            if session_user(request) is None:
-                return JSONResponse(ErrorAnswer("sign in to read the batches").to_dict(), status_code=401)
+            _require_signed_in(session_user, request, message="sign in to read the batches")
             if not registry_dir.parent.is_dir():
                 # The workspace (the Loft disk) is unmounted: an operator error,
                 # not "no review work" — the hub must say so instead of silently
@@ -896,8 +890,7 @@ class _Routes:
             With ``doc`` + ``page`` the answer is the one page the row screen
             opened: the document's maps are cut to that page. The row screen
             needs one page, not every document and page in the batch."""
-            if session_user(request) is None:
-                return JSONResponse(ErrorAnswer("sign in to read the drafts").to_dict(), status_code=401)
+            _require_signed_in(session_user, request, message="sign in to read the drafts")
             try:
                 record = load_batch(batch_id, registry_dir)
                 by_pages = {tuple(b.pages): b.status or Document.DRAFT for b in (record.boundaries or [])}
@@ -994,8 +987,7 @@ class _Routes:
             """The oriented page image the review surface renders (auth-gated
             like the drafts; batch id and page name become path segments —
             validated by the sync contract's guard)."""
-            if session_user(request) is None:
-                return JSONResponse(ErrorAnswer("sign in to read the pages").to_dict(), status_code=401)
+            _require_signed_in(session_user, request, message="sign in to read the pages")
             if not BATCH_ID.match(batch_id) or not safe_page_name(page):
                 return JSONResponse({"error": "invalid batch or page name"}, status_code=400)
             artefacts = BatchArtefacts(work_dir, batch_id)
@@ -1060,8 +1052,7 @@ class _Routes:
             re-transcription runs as the async job, the page marked
             "transcribing" in the drafts payload meanwhile — the surface greys
             the document with a note and the reviewer navigates on."""
-            if session_user(request) is None:
-                return JSONResponse(ErrorAnswer("sign in to fix pages").to_dict(), status_code=401)
+            _require_signed_in(session_user, request, message="sign in to fix pages")
             # 0 is a real intent: the reviewer's rotate-back to the ORIGINAL
             # orientation (the UI's % 4 range) — rejecting it defaulted to a
             # wrong +90 (bot review, 2026-08-16)
@@ -1080,8 +1071,7 @@ class _Routes:
             model was unreachable): clear the failed state, mark transcribing,
             and re-run the reprocess over the CURRENT image. Orientation is
             untouched — this only re-runs OCR (2026-08-16, PRD VR10 AC14)."""
-            if session_user(request) is None:
-                return JSONResponse(ErrorAnswer("sign in to re-read pages").to_dict(), status_code=401)
+            _require_signed_in(session_user, request, message="sign in to re-read pages")
             if not BATCH_ID.match(batch_id) or not safe_page_name(page):
                 return JSONResponse({"error": "invalid batch or page name"}, status_code=400)
             return _start_processing(batch_id, page)
@@ -1109,9 +1099,7 @@ class _Routes:
             drew and what it produced. A page without persisted words (read
             before the read stage wrote them) is refused with the remedy —
             never a silent empty build."""
-            mine = _narrator_or_401(narrator, request, message="sign in to correct rows")
-            if isinstance(mine, JSONResponse):
-                return mine
+            mine = _require_signed_in(narrator, request, message="sign in to correct rows")
             if not BATCH_ID.match(batch_id) or not safe_page_name(page):
                 return JSONResponse({"error": "invalid batch or page name"}, status_code=400)
             try:
@@ -1156,8 +1144,7 @@ class _Routes:
             """The per-page approval: one page's text is agreed on its own; the
             document's item is minted as a draft from the approved pages and is
             catalogued when every text page is approved."""
-            if session_user(request) is None:
-                return JSONResponse(ErrorAnswer("sign in to approve pages").to_dict(), status_code=401)
+            _require_signed_in(session_user, request, message="sign in to approve pages")
             try:
                 batch_id = str(payload["batch_id"])
                 page = str(payload["page"])
@@ -1191,9 +1178,7 @@ class _Routes:
             """The backend receiver: validate, record (the agreed document becomes
             its archive item; the registry records the review), re-publish the
             projection. The frontend never writes the archive."""
-            mine = _narrator_or_401(narrator, request, message="sign in to send confirmations")
-            if isinstance(mine, JSONResponse):
-                return mine
+            mine = _require_signed_in(narrator, request, message="sign in to send confirmations")
             try:
                 confirmation = ConfirmationRequest.from_dict(payload)
                 item_id = record_confirmation(
@@ -1257,8 +1242,7 @@ class _Routes:
             waiting. A document already read is never re-read — the whole point
             of the pass is that the review sees one reading, not a fresh draw
             each visit."""
-            if session_user(request) is None:
-                return JSONResponse(ErrorAnswer("sign in to identify the documents").to_dict(), status_code=401)
+            _require_signed_in(session_user, request, message="sign in to identify the documents")
             item = archive.get_item(item_id)
             if item is None or item.type != "document":
                 return JSONResponse(ErrorAnswer(f"no document {item_id}").to_dict(), status_code=404)
@@ -1298,9 +1282,7 @@ class _Routes:
             """One stage-8 determination: the mention on the document and the
             record in the identity table move together (the archive's seam), and
             the answer carries what remains."""
-            mine = _narrator_or_401(narrator, request, message="sign in to identify the documents")
-            if isinstance(mine, JSONResponse):
-                return mine
+            mine = _require_signed_in(narrator, request, message="sign in to identify the documents")
             try:
                 fields = IdentifyDecideRequest.from_dict(body)
             except (TypeError, ValueError) as exc:
@@ -1349,15 +1331,13 @@ class _Routes:
         @app.get("/api/sync/pending")
         def sync_pending(request: Request) -> Any:
             """The catch-up: the backend pulls anything the real-time push missed."""
-            if session_user(request) is None:
-                return JSONResponse(ErrorAnswer("sign in to pull the outbox").to_dict(), status_code=401)
+            _require_signed_in(session_user, request, message="sign in to pull the outbox")
             return {"pending": [{"id": item_id, **payload} for item_id, payload in outbox.pending()]}
 
         @app.post("/api/sync/pending/received")
         def sync_received(body: Mapping[str, Any], request: Request) -> Any:
             """The website marks pulled items received — the outbox drains."""
-            if session_user(request) is None:
-                return JSONResponse(ErrorAnswer("sign in to drain the outbox").to_dict(), status_code=401)
+            _require_signed_in(session_user, request, message="sign in to drain the outbox")
             try:
                 outbox.mark_received(ReceivedRequest.from_dict(body).ids)
             except ValueError as exc:
@@ -1411,6 +1391,12 @@ def build_app(
         archive.bind_page_service(PageWrites(live), PageCompatibility(live, work_dir).write)
     client = config.client
     app = FastAPI(title="The Loft", docs_url=None, redoc_url=None)
+
+    @app.exception_handler(_UnauthorizedError)
+    async def _unauthorized(request: Request, exc: _UnauthorizedError) -> JSONResponse:
+        """The auth boundary's one 401 shape — every route raises the same."""
+        return JSONResponse(ErrorAnswer(exc.message).to_dict(), status_code=401)
+
     app.add_middleware(TextGZipMiddleware, minimum_size=1024)
 
     routes = _Routes(

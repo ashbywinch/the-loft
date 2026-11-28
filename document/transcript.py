@@ -43,7 +43,7 @@ class Transcript:
     _FENCE: ClassVar[str] = "```"
 
     def __init__(self, row_transcripts: tuple[RowTranscript, ...]) -> None:
-        self.row_transcripts = row_transcripts
+        self.row_transcripts: tuple[RowTranscript, ...] = row_transcripts
 
     @classmethod
     def from_answer(cls, answer: str, rows: int | Sequence[int]) -> Transcript:

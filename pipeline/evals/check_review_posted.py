@@ -116,12 +116,12 @@ class _ReviewGate:
         token: str,
         get_json: Callable[[str, str], Any] | None = None,
     ):
-        self.repo = repo
-        self.token = token
+        self.repo: str = repo
+        self.token: str = token
         # late-bound on purpose: the default has to be looked up when a gate is
         # made, not when the function was defined, or a test (or a caller) that
         # replaces the transport module-wide is silently ignored.
-        self.get_json = get_json or _get_json
+        self.get_json: Callable[[str, str], Any] = get_json or _get_json
 
     def api(self, path: str):
         """GET a repository-relative API path."""
@@ -217,12 +217,12 @@ class _BotLog:
     TAIL_LINES = 12  # lines after a failure marker worth quoting
 
     def __init__(self, text: str) -> None:
-        self.text = text
-        self.structured = tuple(line for line in text.splitlines() if '"text"' in line)
-        self.over_size = self._first(_SIZE_RE)
-        self.failure = self._first_line(self.FAILURE_MARKERS)
-        self.skip = self._first_line(self.SKIP_MARKERS)
-        self.nothing_to_publish = self.REVIEWED_NOTHING in text
+        self.text: str = text
+        self.structured: tuple[str, ...] = tuple(line for line in text.splitlines() if '"text"' in line)
+        self.over_size: _SizeLimit | None = self._first(_SIZE_RE)
+        self.failure: str | None = self._first_line(self.FAILURE_MARKERS)
+        self.skip: str | None = self._first_line(self.SKIP_MARKERS)
+        self.nothing_to_publish: bool = self.REVIEWED_NOTHING in text
 
     def _first(self, pattern: re.Pattern[str]) -> _SizeLimit | None:
         """The two numbers on the first line that carries the size marker."""

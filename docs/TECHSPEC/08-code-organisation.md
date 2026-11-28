@@ -104,9 +104,12 @@ feature, not by its SQL. The rules:
 8. **No SQLite errors escape.** `sqlite3.IntegrityError`,
    `OperationalError` and a busy lock become `StaleVersion`, `Conflict`,
    `Busy`, `NotFound` — errors a caller can act on.
-9. **Test without SQL.** A `MemoryLiveStore` implements the same protocol;
-   the contract suite runs against both. Domain and pipeline tests use the
-   memory store; only the SQL store's own tests know about SQLite.
+9. **Test without a file, not without the engine.** The tests use
+   `LiveStore.in_memory(...)`: the real store and the real SQLite engine over
+   an in-memory database, so transactions, triggers and constraints are the
+   ones production runs. Domain and pipeline tests use it; only the
+   persistence-specific tests (WAL, `VACUUM INTO`, rebuilds) need a file. There
+   is one store implementation, so nothing can drift.
 10. **The facade is the documentation.** A short usage example in the module
     docstring and this section; a new developer reads one file, not the
     schema.
@@ -181,9 +184,11 @@ blob.
 
 ### 19.7 Testing the boundary
 
-- **The contract suite.** One suite runs against `SqliteLiveStore` and
-  `MemoryLiveStore`: save/read, stale, rollback, claim closure, merge,
-  content-addressing, pagination.
+- **The contract suite.** One suite runs against the store over both a file
+  database and an in-memory one (`LiveStore.in_memory`): save/read, stale,
+  rollback, claim closure, merge, content-addressing, pagination. The file
+  mode covers WAL and persistence; the memory mode is the fast, hermetic path
+  on the same engine.
 - **SQL-only tests.** DDL, triggers, `INSERT OR REPLACE`, the hash chain,
   `VACUUM INTO`, rebuild equality and export. They are the only tests that
   import `sqlite3`.

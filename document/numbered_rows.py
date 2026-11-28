@@ -93,8 +93,8 @@ class NumberedRows:
     _PILL_TOUCH = 2
 
     def __init__(self, image: Image.Image, numbers: dict[str, int]) -> None:
-        self.image = image
-        self.numbers = numbers
+        self.image: Image.Image = image
+        self.numbers: dict[str, int] = numbers
 
     @classmethod
     def render(cls, page: Image.Image, rows: list[Row]) -> NumberedRows:

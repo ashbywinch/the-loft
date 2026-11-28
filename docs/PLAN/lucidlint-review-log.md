@@ -212,6 +212,12 @@ The tool's list collides with the house vocabulary.
   FastAPI route-registration idiom; the DI'd dependencies are explicit
   parameters, not hidden state. A class would fight the framework's
   decorator model for no structural gain. Suppressed with reason.
+- **`pipeline/api/server.py` — `closures`, scoped config (2026-11-28, the
+  surface split)**: after `build_app` was split into `_Routes`' registration
+  methods, the route closures are still the FastAPI idiom, so the same
+  judgement applies to each method. Thirteen identical per-site whys tripped
+  `bulk-suppression` ("repeated identical whys are POLICY, not per-site
+  judgment"), so the policy is one scoped config entry for this module.
 - **archive.py field partition**: the split is `_save_lock` usage (the
   identity-table write seam for thread safety) vs store-only methods — an
   implementation detail, not a second domain. `Archive` is the noun.

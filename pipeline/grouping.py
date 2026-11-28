@@ -84,10 +84,10 @@ class GroupingScorer:
         texts: dict[str, str | None],
         flags: dict[str, PageFlag],
     ) -> None:
-        self._kinds = kinds
-        self._dims = dims
-        self._texts = texts
-        self._flags = flags
+        self._kinds: dict[str, str] = kinds
+        self._dims: dict[str, PageSize] = dims
+        self._texts: dict[str, str | None] = texts
+        self._flags: dict[str, PageFlag] = flags
 
     def _flag(self, page: str) -> PageFlag | None:
         """The model's boundary report for ``page``, None for a page the

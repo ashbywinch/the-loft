@@ -35,9 +35,9 @@ class Pages:
     """The page collection: read through the store, write through a change."""
 
     def __init__(self, connection: sqlite3.Connection, content: ContentStore, change: Change | None = None) -> None:
-        self.content_store = content
-        self.projection = PageProjection(connection)
-        self.change = change
+        self.content_store: ContentStore = content
+        self.projection: PageProjection = PageProjection(connection)
+        self.change: Change | None = change
 
     # -- reads -------------------------------------------------------------
 

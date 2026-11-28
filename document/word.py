@@ -58,11 +58,11 @@ class Word:
                 font_size=legacy.get("font_size", 0.0),
                 line=legacy.get("line"),
             )
-        self.rect = Rectangle(x0, y0, x1, y1)
-        self.baseline = measurements.baseline
-        self.waistline = measurements.waistline
-        self.line = measurements.line  # the reading's line index: the word's own line structure
-        self._font_size = measurements.font_size  # unmeasured fallback; 0 means unmeasured
+        self.rect: Rectangle = Rectangle(x0, y0, x1, y1)
+        self.baseline: float | None = measurements.baseline
+        self.waistline: float | None = measurements.waistline
+        self.line: int | None = measurements.line  # the reading's line index: the word's own line structure
+        self._font_size: float = measurements.font_size  # unmeasured fallback; 0 means unmeasured
 
     @property
     def font_size(self) -> float:

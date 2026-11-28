@@ -18,7 +18,6 @@ import pytest
 from loft.live.compat_items import ItemCompatibility
 from loft.live.import_items import sync_items
 from loft.live.item_writes import ItemWrites
-from loft.live.memory import MemoryLiveStore
 from loft.live.store import LiveStore
 from tools.archive import Archive
 from tools.records import Item
@@ -30,7 +29,7 @@ def host(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[tuple[Any, 
     if request.param == "sqlite":
         live = LiveStore.create(tmp_path / "loft.db", app_version="test")
     else:
-        live = MemoryLiveStore(app_version="test")
+        live = LiveStore.in_memory(app_version="test")
     archive = Archive(MemoryStore())
     export = ItemCompatibility(live, archive)
     archive.bind_item_service(ItemWrites(live), export.write)
@@ -199,7 +198,7 @@ def test_the_old_writer_and_the_live_export_agree() -> None:
     old = Archive(MemoryStore())
     old.save_item(_item(), content={"story": "We took the dinghy out."})
 
-    live = MemoryLiveStore(app_version="test")
+    live = LiveStore.in_memory(app_version="test")
     archive = Archive(MemoryStore())
     archive.bind_item_service(ItemWrites(live), ItemCompatibility(live, archive).write)
     try:
@@ -217,7 +216,7 @@ def test_a_re_import_of_the_exported_items_is_a_no_op(host: tuple[Any, Archive])
     archive.save_item(_item(), content={"story": "the words"})
     report = sync_items(live, archive)
     assert report.operations == ()
-    fresh = MemoryLiveStore(app_version="test")
+    fresh = LiveStore.in_memory(app_version="test")
     try:
         imported = sync_items(fresh, archive)
         assert imported.mismatches == ()

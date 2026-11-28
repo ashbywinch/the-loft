@@ -94,7 +94,7 @@ class PageProjection:
     )
 
     def __init__(self, connection: sqlite3.Connection) -> None:
-        self.connection = connection
+        self.connection: sqlite3.Connection = connection
 
     def current_revision(self, page_id: str) -> int | None:
         row = self.connection.execute("SELECT revision FROM pages WHERE page_id = ?", (page_id,)).fetchone()

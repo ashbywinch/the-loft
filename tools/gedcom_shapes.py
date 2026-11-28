@@ -26,6 +26,21 @@ from tools.records import PeopleTable, PlacesTable
 
 
 @dataclass(frozen=True)
+class _ExportSet:
+    """What leaves the archive — the confirmed/estimated people and edges,
+    plus the lookup maps the export renders them with: exported ids, edges,
+    place names, people by id, and the deterministic xref ids (sorted order,
+    documented mapping). Named fields instead of the positional 5-tuple the
+    call site could not read."""
+
+    exported_ids: set[str]
+    edges: tuple[GedcomEdge, ...]
+    place_names: dict[str, str]
+    by_id: dict[str, GedcomPerson]
+    xref: dict[str, str]
+
+
+@dataclass(frozen=True)
 class GedcomShapes:
     """The island's record set: the people, the relationship edges, the places."""
 
@@ -70,6 +85,25 @@ class GedcomShapes:
             relationships=tuple(GedcomEdge.from_relationship(edge) for edge in people.relationships),
             places=tuple(GedcomPlace.from_place(place) for place in places.places),
         )
+
+    def export_set(self) -> _ExportSet:
+        """The confirmed/estimated people and edges that leave the archive —
+        proposed records stay out (2026-08-09 review) — plus the lookup maps:
+        exported ids, edges, place names, people by id, and the deterministic
+        xref ids (sorted order, documented mapping)."""
+        exported = tuple(person for person in self.people if person.status in (None, "confirmed", "estimated"))
+        exported_ids = {person.id for person in exported}
+        edges = tuple(
+            edge
+            for edge in self.relationships
+            if edge.a in exported_ids
+            and edge.b in exported_ids
+            and edge.status in (None, "confirmed", "estimated")  # proposed edges stay out too (2026-08-09 review)
+        )
+        place_names = {place.id: place.name for place in self.places}
+        by_id = {person.id: person for person in exported}
+        xref = {pid: f"P{i}" for i, pid in enumerate(sorted(exported_ids), start=1)}
+        return _ExportSet(exported_ids, edges, place_names, by_id, xref)
 
     @classmethod
     def read(cls, folder: Path) -> GedcomShapes:

@@ -2735,9 +2735,15 @@ async function confirmNext(session) {
   if (reworking.length) {
     // the reviewer may have advanced past a page being re-read: approving the
     // document now would archive that page's stale text
-    session.root.querySelector(".rv-txa")?.replaceChildren(
-      el("div", { class: "rv-note" }, `Page ${reworking.join(", ")} is being re-read — approve it when it comes back.`),
-    );
+    session.root
+      .querySelector(".rv-txa")
+      ?.replaceChildren(
+        el(
+          "div",
+          { class: "rv-note" },
+          `Page ${reworking.join(", ")} is being re-read — approve it when it comes back.`,
+        ),
+      );
     return;
   }
   acceptEdit(session);

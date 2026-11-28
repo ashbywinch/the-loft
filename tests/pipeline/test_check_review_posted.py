@@ -69,6 +69,25 @@ def test_a_persons_skip_text_does_not_cover() -> None:
     assert not _covers([_comment(body, user_type="User")])
 
 
+def test_an_inline_finding_from_the_bot_covers() -> None:
+    """The incremental path publishes findings as inline review comments and no
+    guide (measured on the pinned action). An inline comment from a machine,
+    during this run, is the review speaking."""
+    inline = [_comment("**Possible Issue** something in the diff", user_type="Bot")]
+    assert gate._a_finding_posted(inline, _RUN_STARTED)
+
+
+def test_an_inline_comment_from_a_person_does_not_cover() -> None:
+    inline = [_comment("I think this is wrong", user_type="User")]
+    assert not gate._a_finding_posted(inline, _RUN_STARTED)
+
+
+def test_a_review_that_found_nothing_to_publish_is_a_verdict() -> None:
+    """pr-agent logs this when the increment was examined and came back clean."""
+    log = '{"text":"Review output is not published: no major issues detected."}\n'
+    assert gate._BotLog(log).nothing_to_publish
+
+
 def test_a_guide_with_leading_whitespace_still_covers() -> None:
     """A body arrives as the bot wrote it. A leading newline or byte-order mark
     is not part of the format, and tripping on one would fail the gate on a

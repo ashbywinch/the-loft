@@ -526,7 +526,10 @@ describe("the unfinished import session (user: the front page shows the session,
   });
 
   it("the review door exists before the work count resolves", () => {
-    vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise(() => {})),
+    );
     const main = document.createElement("main");
     render(main, {}, STATE);
     const card = main.querySelector(".review-card");

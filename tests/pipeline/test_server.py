@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import threading
 import urllib.error
 import urllib.request
@@ -18,7 +19,9 @@ from PIL import Image
 
 from loft.live.import_identity import sync_from_archive
 from loft.live.memory import MemoryLiveStore
+from pipeline.api import auth
 from pipeline.api.server import ServerConfig, create_server
+from pipeline.api.session_user import SessionUser
 from pipeline.api.sync import Outbox
 from pipeline.registry import load_batch
 from tools.archive import Archive
@@ -82,9 +85,10 @@ class ServerFixture:
         self._reprocess: Any | None = _reprocess
         # the session secret before any app build — the server refuses to
         # start without it (forgeable sessions otherwise)
-        import os
-
         os.environ.setdefault("THE_LOFT_SESSION_SECRET", "test-secret")
+        # the household's allowlist (the private layer is family-only): the
+        # fixture names the narrator's account and the second one it holds
+        os.environ.setdefault("THE_LOFT_FAMILY_MEMBERS", "alex@example.com,other@example.com")
         # the sync surfaces are bound to tmp dirs, never the real workspace
         # (the endpoints must not touch the home disk in tests)
         self.work_dir: Path = data_dir.parent / "work"
@@ -118,9 +122,10 @@ class ServerFixture:
         # the server refuses to start without a session secret (forgeable
         # sessions) — the test secret must be set BEFORE create_server, not
         # after (the dev shell exports the secret; CI has none)
-        import os
-
         os.environ.setdefault("THE_LOFT_SESSION_SECRET", "test-secret")
+        # the household's allowlist (the private layer is family-only): the
+        # fixture names the narrator's account and the second one it holds
+        os.environ.setdefault("THE_LOFT_FAMILY_MEMBERS", "alex@example.com,other@example.com")
         self.server = create_server(
             ServerConfig(
                 store,
@@ -154,7 +159,7 @@ class ServerFixture:
         from pipeline.api.session_user import SessionUser
 
         user = SessionUser("alex@example.com", "Alex Hale", "")
-        self.cookie = f"{auth.GoogleOAuth.COOKIE_NAME}={auth._make_session_cookie(user)}"
+        self.cookie = f"{auth.GoogleOAuth.COOKIE_NAME}={auth.session_cookie(user)}"
 
     def post(self, path: str, body: dict[str, Any], cookie: str | None = None) -> tuple[int, dict[str, Any]]:
         headers = {"Content-Type": "application/json"}
@@ -541,6 +546,44 @@ def test_write_apis_reject_a_foreign_origin(server: ServerFixture) -> None:
         },
     )
     assert status == 200, body
+
+
+def _stranger_cookie() -> str:
+    """A signed-in session for an account that is NOT on the family list — a
+    Google account anyone can have."""
+    return f"{auth.GoogleOAuth.COOKIE_NAME}={auth.session_cookie(SessionUser('stranger@example.com', '', ''))}"
+
+
+def test_a_signed_in_stranger_reads_nothing(server: ServerFixture) -> None:
+    """Signing in is not being family (user: the household's allowlist). The
+    private layer used to open for any Google account that could sign in."""
+    stranger = _stranger_cookie()
+    for path in ("/data/people.json", "/api/bootstrap", "/api/sync/batches", "/api/auth/me"):
+        status, body = server.get(path, cookie=stranger)
+        if path == "/api/auth/me":
+            # the identity route still answers — the app must be able to say
+            # who is signed in, and that they are not family
+            assert status == 200, path
+            assert b'"is_family": false' in body.replace(b'"is_family":false', b'"is_family": false'), body
+            continue
+        assert status == 403, f"{path} answered {status}"
+        assert b"not on the archive's family list" in body, body
+        # the refusal is a fact about the request, never a copy of the
+        # account: the body must not hand anyone reading the screen the email
+        assert b"stranger@example.com" not in body, body
+    # the same routes answer the family
+    status, _ = server.get("/api/sync/batches", cookie=server.cookie)
+    assert status == 200
+    status, _ = server.get("/data/people.json", cookie=server.cookie)
+    assert status == 200
+
+
+def test_me_names_the_family_state(server: ServerFixture) -> None:
+    """The app decides between the archive and the "not family" screen from
+    this one answer, so it states it."""
+    status, raw = server.get("/api/auth/me", cookie=server.cookie)
+    assert status == 200
+    assert json.loads(raw)["is_family"] is True
 
 
 def test_data_files_require_a_session(server: ServerFixture) -> None:

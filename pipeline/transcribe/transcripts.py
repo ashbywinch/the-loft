@@ -488,7 +488,7 @@ def _covered(transcripts: list[RowTranscript], number: int) -> bool:
 def _endpoint() -> str:
     """The endpoint the calls go to — as the client resolves it, so the report
     cannot describe a different one than was used."""
-    return VlmOptions().base_url
+    return VlmOptions().endpoint
 
 
 @dataclass(frozen=True)

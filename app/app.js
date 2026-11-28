@@ -161,11 +161,7 @@ export async function boot() {
       console.error("boot: failed to load the archive", error);
       const bootRoot = document.getElementById("app");
       bootRoot.replaceChildren(
-        el(
-          "div",
-          { class: "empty" },
-          `Could not load the archive (${error.message}). Reload to retry.`,
-        ),
+        el("div", { class: "empty" }, `Could not load the archive (${error.message}). Reload to retry.`),
       );
       return;
     }
@@ -176,6 +172,11 @@ export async function boot() {
       markData();
     } else if (!answer.signedIn) {
       document.getElementById("app").replaceChildren(gateScreen());
+      return;
+    } else if (answer.notAMember) {
+      // a signed-in account that is not family: the private layer refused the
+      // projection, and the honest answer is who to ask, not "try reloading"
+      document.getElementById("app").replaceChildren(gateScreen({ notAMember: true }));
       return;
     } else {
       Object.assign(state, answer.state);

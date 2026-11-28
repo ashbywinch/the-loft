@@ -144,6 +144,47 @@ The marker's name is `eval`, not `e2e`, so "e2e" keeps its definition: most eval
   a test walks the README + a sample sidecar and asserts a stranger could
   reconstruct the item.
 
+## When a real-model eval fails
+
+A red eval on a sound run means the prompt is ambiguous. Fix the prompt, not
+the eval; a run that never reached the model — a transport failure, a cache
+hit — is not a verdict.
+
+- **Never append an example for a single failing case.** Fix the rule so the
+  case is covered. Reshape the examples only when the prompt as a whole calls
+  for it.
+- **Never state a rule without its reason.** The model follows a rule it
+  understands, and guesses at one it memorised.
+- **Never allow an output value without defining it.** Define each value once,
+  where the output is declared, and render it into the prompt. Do not retype
+  the list.
+- **Never keep two rules for one decision.** Delete the weaker one.
+
+One rule, two ways:
+
+✗ "Refunds, deliveries and invoices are not urgent."
+
+✓ "Urgent: the sender must act today to avoid a loss."
+
+**A condition that fails both ways means the rule is ambiguous.** A clear rule
+cannot produce both answers. More samples only choose which error ships.
+
+| Never | Because |
+|---|---|
+| Re-run the job, suite, or eval | the run is the verdict |
+| Sample n-of-m or best-of-k | it votes on a defect |
+| Weaken or delete the assertion | it hides the defect |
+| Move the eval off the required check | the gate becomes decorative |
+| Ask the user to choose among these | fix the prompt |
+
+**A condition that fails an unrelated change means the rule is unstable.** A
+docs-only change cannot move a judgement.
+
+**Never retry through a response cache.** A cached completion replays the
+failure. The model client sends the gateway's cache-bypass header on a retry
+and on a measurement (`AIClient(fresh=True)`, `pipeline/model/http_headers.py`);
+a run whose log shows a cache hit is not a measurement.
+
 ## Gates
 
 - `make test` runs lint + typecheck first; a lint failure blocks tests.

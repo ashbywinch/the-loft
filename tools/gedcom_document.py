@@ -129,41 +129,6 @@ def _estimate_note(basis: dict[str, str] | None, level: int = 1) -> list[str]:
     return _lines("Estimated — the family's recollection; the basis is not recorded", level)
 
 
-@dataclass(frozen=True)
-class _ExportSet:
-    """What leaves the archive — the confirmed/estimated people and edges,
-    plus the lookup maps the export renders them with: exported ids, edges,
-    place names, people by id, and the deterministic xref ids (sorted order,
-    documented mapping). Named fields instead of the positional 5-tuple the
-    call site could not read."""
-
-    exported_ids: set[str]
-    edges: tuple[GedcomEdge, ...]
-    place_names: dict[str, str]
-    by_id: dict[str, GedcomPerson]
-    xref: dict[str, str]
-
-
-def _export_set(shapes: GedcomShapes) -> _ExportSet:
-    """The confirmed/estimated people and edges that leave the archive —
-    proposed records stay out (2026-08-09 review) — plus the lookup maps:
-    exported ids, edges, place names, people by id, and the deterministic
-    xref ids (sorted order, documented mapping)."""
-    exported = tuple(person for person in shapes.people if person.status in (None, "confirmed", "estimated"))
-    exported_ids = {person.id for person in exported}
-    edges = tuple(
-        edge
-        for edge in shapes.relationships
-        if edge.a in exported_ids
-        and edge.b in exported_ids
-        and edge.status in (None, "confirmed", "estimated")  # proposed edges stay out too (2026-08-09 review)
-    )
-    place_names = {place.id: place.name for place in shapes.places}
-    by_id = {person.id: person for person in exported}
-    xref = {pid: f"P{i}" for i, pid in enumerate(sorted(exported_ids), start=1)}
-    return _ExportSet(exported_ids, edges, place_names, by_id, xref)
-
-
 class _FamilyUnits:
     """The FAM record builder — the routing state the spouse-pair and
     single-parent passes thread through (families, the notes that ride them,
@@ -172,8 +137,8 @@ class _FamilyUnits:
     through 'archive' are this class's machinery."""
 
     def __init__(self, edges: tuple[GedcomEdge, ...], archive: Archive | None) -> None:
-        self._edges = edges
-        self._archive = archive
+        self._edges: tuple[GedcomEdge, ...] = edges
+        self._archive: Archive | None = archive
         self._pairs: set[tuple[str, str]] = set()
         self._marriage_dates: dict[tuple[str, str], GedcomDate] = {}
         self._pair_notes: dict[tuple[str, str], list[str]] = {}
@@ -184,7 +149,7 @@ class _FamilyUnits:
         self._estimated_parent_edges: set[tuple[str, str]] = set()
         self._children_of: dict[str, list[str]] = {}
         self._single_parent: dict[str, list[str]] = {}
-        self._counter = 0
+        self._counter: int = 0
 
     def build(self) -> tuple[GedcomFamily, ...]:
         """The FAM records: spouse pairs + their children, then single-parent
@@ -527,9 +492,9 @@ class GedcomDocument:
     """
 
     def __init__(self, shapes: GedcomShapes, *, archive: Archive | None = None) -> None:
-        self._shapes = shapes
+        self._shapes: GedcomShapes = shapes
         self._records: list[Any] = []  # the parsed GEDCOM state (shape-built documents carry none)
-        self._archive = archive  # the archive-only note sources (stories, estimate evidence)
+        self._archive: Archive | None = archive  # the archive-only note sources (stories, estimate evidence)
 
     @classmethod
     def from_text(cls, text: str) -> GedcomDocument:
@@ -747,7 +712,7 @@ class GedcomDocument:
         carrying the evidence that produced it (the review conversation's
         recorded basis); PENDING records — the island's _LOFT_STATUS, the
         archive's proposed — stay out (2026-08-09, user)."""
-        export = _export_set(self._shapes)
+        export = self._shapes.export_set()
         families = _FamilyUnits(export.edges, self._archive).build()
         notes_by_person = (
             _story_notes(self._archive, export.exported_ids) if self._archive is not None else StoryNotes()

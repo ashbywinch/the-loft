@@ -149,11 +149,6 @@ ignore = ["unused"]
 [lucidlint."pipeline/api/sync.py"]
 ignore = ["long-param-list"]
 
-# long-param-list: the crop-grid run's inputs are the page's state — no
-# class for one call site (two sites, one why).
-[lucidlint."pipeline/evals/eval_crop_grid.py"]
-ignore = ["long-param-list", "data-clump"]
-
 # latent-class: the GEDCOM serializer: one concern, one state; its methods are the export's steps, no field-disjoint partition (recorded 2026-10-08, held not split)
 [lucidlint."tools/gedcom_document.py"]
 ignore = ["god-class", "long-param-list", "partition"]
@@ -182,6 +177,13 @@ ignore = ["partition"]
 # the write half cannot be used outside a transaction.
 [lucidlint."loft/live/people.py"]
 ignore = ["partition"]
+
+# closures: the route closures ARE the FastAPI registration idiom — the DI'd
+# deps are explicit parameters, not hidden state, and a class would fight the
+# decorator model for no structural gain (docs/PLAN/lucidlint-review-log.md
+# §2.5 extended to the surface's registration methods, 2026-11-28).
+[lucidlint."pipeline/api/server.py"]
+ignore = ["closures"]
 
 # fakefs: the exporter tests use a real SQLite file and a real archive tree on
 # tmp_path — the append-only store, sqlite semantics and the versioned file

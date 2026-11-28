@@ -28,10 +28,10 @@ class People:
     """The person collection: read through the store, write through a change."""
 
     def __init__(self, connection: sqlite3.Connection, change: Change | None = None) -> None:
-        self.connection = connection
-        self.change = change
-        self.rows = person_row.PersonProjection(connection)
-        self.aliases = Aliases(connection)
+        self.connection: sqlite3.Connection = connection
+        self.change: Change | None = change
+        self.rows: person_row.PersonProjection = person_row.PersonProjection(connection)
+        self.aliases: Aliases = Aliases(connection)
 
     def get(self, person_id: str) -> Person | None:
         return self.rows.get(person_id)

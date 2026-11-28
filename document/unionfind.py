@@ -12,7 +12,7 @@ class UnionFind:
     copied per consumer."""
 
     def __init__(self, size: int = 0) -> None:
-        self._parent = list(range(size))
+        self._parent: list[int] = list(range(size))
 
     @property
     def size(self) -> int:

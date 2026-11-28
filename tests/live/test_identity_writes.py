@@ -16,7 +16,6 @@ from typing import Any
 import pytest
 
 from loft.live.errors import Conflict, NotFound, StaleVersion
-from loft.live.memory import MemoryLiveStore
 from loft.live.store import LiveStore
 from tools.records import GonePerson, Item, Person, Place, Relationship
 from tools.theme import Theme
@@ -27,7 +26,7 @@ def store(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[Any]:
     if request.param == "sqlite":
         live = LiveStore.create(tmp_path / "loft.db", app_version="test")
     else:
-        live = MemoryLiveStore(app_version="test")
+        live = LiveStore.in_memory(app_version="test")
     yield live
     live.close()
 

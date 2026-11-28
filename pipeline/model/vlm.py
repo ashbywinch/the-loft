@@ -176,7 +176,13 @@ def parse_transcription_response(text: str) -> Transcription:
     indexes stay aligned. No boxes when the model returned no usable
     geometry (the pipeline falls back to the detector's association — the
     geometry must come from the model that can READ the cursive, not the
-    rec engine that merges/misses its lines)."""
+    rec engine that merges/misses its lines).
+
+    Every answer yields a Transcription: the parse has no failing arm. A
+    call that died is the caller's ``VlmError`` to raise, and an answer that
+    does not fit the requested structure is a Transcription without boxes,
+    not an exception — so a caller never has to guess which of the two it
+    is holding."""
     try:
         data = extract_json(text)
     except VlmError:
@@ -271,11 +277,38 @@ class VlmOptions:
     model: str = ModelConfig.VISION_MODEL
     system: str = VlmPrompts.SYSTEM
     user_text: str | None = None
-    base_url: str = AIClient.DEFAULT_BASE_URL
+    # the endpoint the caller states; None is the gateway default (resolved
+    # by ``endpoint``, AIClient's own rule) — an options value is never an
+    # empty URL
+    base_url: str | None = None
     api_key: str | None = None
     timeout: float = 900.0
     max_tokens: int = 64000
     urlopen: Callable[..., Any] | None = None
+
+    def __post_init__(self) -> None:
+        """An options value always names the model it reads with: a blank
+        model is not "the default", it is a call with nothing to call."""
+        if not self.model or not self.model.strip():
+            raise ValueError("VlmOptions needs a model — an unnamed read has nothing to call")
+
+    @property
+    def endpoint(self) -> str:
+        """The base URL the call goes to: the stated one, or the gateway's
+        default when the options name none — the same rule the client
+        applies, so a caller that names no endpoint gets the gateway."""
+        return self.base_url or AIClient.DEFAULT_BASE_URL
+
+    @property
+    def model_slug(self) -> str:
+        """The model's name as a filename part — the experiments run several
+        models on one page, and each trial's reading and report are named for
+        the model they measured. A name that reduces to nothing cannot name a
+        file, so it is refused rather than written unnamed."""
+        slug = self.model.replace("/", "-").replace("@", "")
+        if not slug:
+            raise ValueError(f"the model {self.model!r} names no output file")
+        return slug
 
     def run(self, transcribe: Callable[..., VlmAnswer], image: Path) -> VlmAnswer:
         """This spec's call: the config travels as named arguments, so one
@@ -285,7 +318,7 @@ class VlmOptions:
             model=self.model,
             system=self.system,
             user_text=self.user_text,
-            base_url=self.base_url,
+            base_url=self.endpoint,
             api_key=self.api_key,
             timeout=self.timeout,
             max_tokens=self.max_tokens,
@@ -311,7 +344,7 @@ def transcribe_images_vlm(images: list[Path], *, options: VlmOptions | None = No
         user_content.append(TextContent(text=opts.user_text))
     return _content_and_usage(
         _vision_post(
-            base_url=opts.base_url,
+            base_url=opts.endpoint,
             key=opts.api_key or find_api_key(),
             payload=ChatRequest(
                 model=opts.model,
@@ -433,7 +466,14 @@ def _vision_post(
                 ),
                 timeout=timeout,
             ) as response:
-                body = json.loads(response.read().decode("utf-8"))
+                raw = response.read().decode("utf-8", "replace")
+                try:
+                    body = json.loads(raw)
+                except json.JSONDecodeError as exc:
+                    raise VlmError(
+                        f"vision endpoint answered HTTP {response.status} with no JSON "
+                        f"({len(raw)} bytes): {raw[:200]!r}"
+                    ) from exc
                 try:
                     return ChatResponse.from_dict(body)
                 except (KeyError, IndexError, TypeError) as exc:

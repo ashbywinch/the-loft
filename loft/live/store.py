@@ -42,27 +42,36 @@ class LiveStore:
     IDENTITY_KINDS: tuple[Kind, ...] = (PLACE, ORG, THEME, RELATIONSHIP)
 
     def __init__(self, database: LiveDatabase, app_version: str) -> None:
-        self.database = database
-        self.app_version = app_version
-        self.lock = threading.RLock()
+        self.database: LiveDatabase = database
+        self.app_version: str = app_version
+        self.lock: threading.RLock = threading.RLock()
         content = ContentStore(database.connection)
-        self.people = People(database.connection)
-        self.items = Items(database.connection, content)
-        self.reviews = Reviews(database.connection, content)
-        self.batches = Batches(database.connection)
-        self.pages = Pages(database.connection, content)
-        self.documents = Documents(database.connection)
-        self.places = Collection(database.connection, PLACE)
-        self.orgs = Collection(database.connection, ORG)
-        self.themes = Collection(database.connection, THEME)
-        self.relationships = Collection(database.connection, RELATIONSHIP)
-        self.aliases = Aliases(database.connection)
-        self.identities = Identities(self)
-        self.content = content
+        self.people: People = People(database.connection)
+        self.items: Items = Items(database.connection, content)
+        self.reviews: Reviews = Reviews(database.connection, content)
+        self.batches: Batches = Batches(database.connection)
+        self.pages: Pages = Pages(database.connection, content)
+        self.documents: Documents = Documents(database.connection)
+        self.places: Collection = Collection(database.connection, PLACE)
+        self.orgs: Collection = Collection(database.connection, ORG)
+        self.themes: Collection = Collection(database.connection, THEME)
+        self.relationships: Collection = Collection(database.connection, RELATIONSHIP)
+        self.aliases: Aliases = Aliases(database.connection)
+        self.identities: Identities = Identities(self)
+        self.content: ContentStore = content
 
     @classmethod
     def create(cls, path: Path, *, app_version: str) -> Self:
         return cls(LiveDatabase.create(path, app_version=app_version), app_version)
+
+    @classmethod
+    def in_memory(cls, *, app_version: str) -> Self:
+        """The live store over a fresh in-memory database — the tests' store.
+
+        The same engine, schema and transaction semantics as `create`, with no
+        file. Tests that need the file path (WAL, persistence, `VACUUM INTO`) use
+        `create`; everything else uses this and stays hermetic."""
+        return cls(LiveDatabase.in_memory(app_version=app_version), app_version)
 
     @classmethod
     def open(cls, path: Path, *, app_version: str) -> Self:

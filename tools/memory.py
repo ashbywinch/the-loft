@@ -212,9 +212,9 @@ Respond with ONLY this JSON: {"violations": [string]} — each a short, \
 specific description of what to fix."""
 
     def __init__(self, assessment: Assessment, who: str, knowledge: Knowledge) -> None:
-        self.assessment = assessment
-        self.who = who
-        self.knowledge = knowledge
+        self.assessment: Assessment = assessment
+        self.who: str = who
+        self.knowledge: Knowledge = knowledge
 
     def narrator_dob(self) -> str | None:
         """The narrator's date of birth for the plausibility guard — the
@@ -599,12 +599,12 @@ class Assessor:
         account: str,
         knowledge: Knowledge,
     ) -> None:
-        self._client = client
-        self._anchor = anchor
-        self._who = who
-        self._account = account
-        self._knowledge = knowledge
-        self._context = "\n\n".join(
+        self._client: ChatClient = client
+        self._anchor: Anchor = anchor
+        self._who: str = who
+        self._account: str = account
+        self._knowledge: Knowledge = knowledge
+        self._context: str = "\n\n".join(
             [
                 _anchor_line(anchor),
                 f"Contributor: {who or 'unknown'}",
@@ -733,7 +733,7 @@ class StoryLinks:
 
     def __init__(self, *, verified: bool, all_ids: set[str]) -> None:
         self.ref_status: RefStatus = "confirmed" if verified else "proposed"
-        self.all_ids = all_ids
+        self.all_ids: set[str] = all_ids
         self.people: list[Ref] = []
         self.places: list[Ref] = []
         self.themes: list[Ref] = []
@@ -1197,8 +1197,8 @@ Respond with ONLY this JSON: {"answers": [{"text": string, "value": \
 string|null, "precision": "exact"|"month"|"year"|"approx"|null}]}"""
 
     def __init__(self, client: ChatClient, knowledge: Knowledge) -> None:
-        self.client = client
-        self.knowledge = knowledge
+        self.client: ChatClient = client
+        self.knowledge: Knowledge = knowledge
 
     def assess(
         self,

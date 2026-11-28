@@ -114,10 +114,10 @@ class Verification:
     """The gate's checks, over one store and the archive/workspace sources."""
 
     def __init__(self, store: LiveStore, *, archive_dir: Path, workspace: Path) -> None:
-        self.store = store
-        self.archive = Archive(DiskStore(archive_dir))
-        self.archive_dir = archive_dir
-        self.workspace = workspace
+        self.store: LiveStore = store
+        self.archive: Archive = Archive(DiskStore(archive_dir))
+        self.archive_dir: Path = archive_dir
+        self.workspace: Path = workspace
         self.findings: list[str] = []
 
     def findings_for(

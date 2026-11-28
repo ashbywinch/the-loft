@@ -278,7 +278,7 @@ class ItemProjection:
     """One connection's item rows: the reader and the guarded writer."""
 
     def __init__(self, connection: sqlite3.Connection) -> None:
-        self.connection = connection
+        self.connection: sqlite3.Connection = connection
 
     def current_version(self, item_id: str) -> int | None:
         row = self.connection.execute("SELECT version FROM items WHERE item_id = ?", (item_id,)).fetchone()

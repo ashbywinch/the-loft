@@ -18,7 +18,6 @@ from loft.live.batch_row import BatchState, ScanState
 from loft.live.document_row import DocumentState
 from loft.live.errors import Conflict, StaleVersion
 from loft.live.items import ContentInput
-from loft.live.memory import MemoryLiveStore
 from loft.live.page_row import PageState
 from loft.live.store import LiveStore
 from tools.records import Item, Org, Person, Place, Relationship, Session
@@ -30,7 +29,7 @@ def store(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[Any]:
     if request.param == "sqlite":
         live = LiveStore.create(tmp_path / "loft.db", app_version="test")
     else:
-        live = MemoryLiveStore(app_version="test")
+        live = LiveStore.in_memory(app_version="test")
     yield live
     live.close()
 
@@ -731,7 +730,7 @@ def test_a_status_only_batch_save_keeps_its_scans(store: Any) -> None:
 def test_a_nested_memory_change_is_refused() -> None:
     """A change cannot nest, on either store: a nested block would commit half
     a change."""
-    store = MemoryLiveStore(app_version="test")
+    store = LiveStore.in_memory(app_version="test")
     try:
         with store.change(actor="import"), pytest.raises(Conflict, match="nested"), store.change(actor="import"):
             pass

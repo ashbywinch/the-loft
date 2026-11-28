@@ -36,10 +36,10 @@ class Items:
     """The item collection: read through the store, write through a change."""
 
     def __init__(self, connection: sqlite3.Connection, content: ContentStore, change: Change | None = None) -> None:
-        self.connection = connection
-        self.content_store = content
-        self.projection = ItemProjection(connection)
-        self.change = change
+        self.connection: sqlite3.Connection = connection
+        self.content_store: ContentStore = content
+        self.projection: ItemProjection = ItemProjection(connection)
+        self.change: Change | None = change
 
     # -- reads -------------------------------------------------------------
 

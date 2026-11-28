@@ -61,6 +61,11 @@ class Assessment:
             "questions": [q.to_dict() for q in self.questions],
         }
 
+    def question_text(self) -> str:
+        """The questions' text as one lowercased string — the eval's subject
+        when it asserts what the flow asked."""
+        return " ".join(question.text for question in self.questions).lower()
+
     def strip_kinship_matches(self) -> Assessment:
         """A person extraction whose name is a bare kinship term ('Dad', 'Mum',
         'Aunt') never keeps a match — the term is the writer's own relative, and

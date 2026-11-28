@@ -84,7 +84,7 @@ class LineFitter:
     ROUNDS = 8  # refit-merge-reassign-split passes: the fit settles well inside this
 
     def __init__(self, scale: Ruler) -> None:
-        self.scale = scale
+        self.scale: Ruler = scale
 
     def fit(self, shapes: list[Mark]) -> list[Line]:
         """The lines: seeded, then settled by the rounds, empty ones dropped."""
@@ -661,7 +661,7 @@ class Strokes:
         # coordinates and a drag outside the image can exceed [0, 1] (one stroke
         # carried a point at x=14642 on a 2544px page). Clamped here as well as in
         # the sketch, because stored marks outlive the app that made them.
-        self.strokes = [
+        self.strokes: list[Stroke] = [
             Stroke(
                 [
                     Point(min(max(point.x, 0.0), 1.0) * width, min(max(point.y, 0.0), 1.0) * height)

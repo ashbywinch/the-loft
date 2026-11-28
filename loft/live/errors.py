@@ -31,5 +31,5 @@ class StaleVersion(LiveError):  # noqa: N818 — the TECHSPEC names this error
 
     def __init__(self, current: Any, base: int | None) -> None:
         super().__init__(f"stale version {base}; current is {current!r}")
-        self.current = current
-        self.base = base
+        self.current: Any = current
+        self.base: int | None = base

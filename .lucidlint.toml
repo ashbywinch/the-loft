@@ -178,6 +178,13 @@ ignore = ["partition"]
 [lucidlint."loft/live/people.py"]
 ignore = ["partition"]
 
+# closures: the route closures ARE the FastAPI registration idiom — the DI'd
+# deps are explicit parameters, not hidden state, and a class would fight the
+# decorator model for no structural gain (docs/PLAN/lucidlint-review-log.md
+# §2.5 extended to the surface's registration methods, 2026-11-28).
+[lucidlint."pipeline/api/server.py"]
+ignore = ["closures"]
+
 # fakefs: the exporter tests use a real SQLite file and a real archive tree on
 # tmp_path — the append-only store, sqlite semantics and the versioned file
 # chain are the subject, not incidental I/O (docs/testing-standards.md).

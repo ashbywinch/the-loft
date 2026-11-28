@@ -323,6 +323,13 @@ def _check_theme_items(themes: ThemesTable, items: Mapping[str, Item]) -> None:
                 )
 
 
+class ProjectionFiles:
+    """The projection's wire file names — the one home for the directory's
+    names, read by publish and the capture server alike."""
+
+    INDEX = "index.json"
+
+
 def projection_json(archive: Archive) -> dict[str, str]:
     """Every derived JSON file for the static projection: index, people,
     places, orgs, themes, imports, transcripts — filename -> the text publish
@@ -354,7 +361,7 @@ def projection_json(archive: Archive) -> dict[str, str]:
     if imports.supersedes:
         imports_wire["supersedes"] = imports.supersedes
     files: dict[str, str] = {}
-    files["index.json"] = json.dumps(ProjectionIndex.build(items).to_dict(), indent=1, ensure_ascii=False)
+    files[ProjectionFiles.INDEX] = json.dumps(ProjectionIndex.build(items).to_dict(), indent=1, ensure_ascii=False)
     files["people.json"] = json.dumps(people.to_dict(), indent=1, ensure_ascii=False)
     files["places.json"] = json.dumps(places.to_dict(), indent=1, ensure_ascii=False)
     files["orgs.json"] = json.dumps(orgs.to_dict(), indent=1, ensure_ascii=False)

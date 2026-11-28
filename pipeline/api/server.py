@@ -104,6 +104,7 @@ from tools.atomic import atomic_write
 from tools.decision_basis import DecisionBasis
 from tools.loft_paths import LoftPaths
 from tools.memory import ElicitationError, Knowledge
+from tools.projection import ProjectionFiles
 from tools.records import Item, Person, Place, ReviewContext, ReviewDecision, split_content
 from tools.review_verdict import ReviewVerdict
 from tools.store import FileStore
@@ -208,7 +209,7 @@ def _review_message(result: ReviewVerdict, person: Person) -> str:
 
 
 def _drop_from_projection(item_id: str, *, data_dir: Path) -> None:
-    index_path = data_dir / "index.json"
+    index_path = data_dir / ProjectionFiles.INDEX
     if not index_path.exists():
         return
     index = json.loads(index_path.read_text(encoding="utf-8"))
@@ -227,7 +228,7 @@ def _refresh_projection(
 ) -> None:
     """The derived cache (app/data): merge the story and any proposed
     records. Idempotent by id — re-running a save never duplicates."""
-    index_path = data_dir / "index.json"
+    index_path = data_dir / ProjectionFiles.INDEX
     if index_path.exists():
         index = json.loads(index_path.read_text(encoding="utf-8"))
         items = [it for it in index.get("items", []) if it["id"] != story.id]
@@ -247,6 +248,17 @@ def _merge_records(filename: str, key: str, records: tuple[Person | Place, ...],
     known = {r["id"] for r in data.get(key, [])}
     data[key] = data.get(key, []) + [r.to_dict() for r in records if r.id not in known]
     atomic_write(path, json.dumps(data, indent=1, ensure_ascii=False))
+
+
+def _narrator_or_401(
+    narrator: Callable[[Request], Narrator | None], request: Request, *, message: str
+) -> Narrator | JSONResponse:
+    """The signed-in narrator, or the route's 401 — the auth boundary is the
+    absent case, and a stand-in would hide it (docs/coding-standards.md)."""
+    mine = narrator(request)
+    if mine is None:
+        return JSONResponse(ErrorAnswer(message).to_dict(), status_code=401)
+    return mine
 
 
 @dataclass
@@ -290,7 +302,7 @@ class _Routes:
             people=self.read_projection("people.json", "people"),
             places=self.read_projection("places.json", "places"),
             themes=self.read_projection(filename="themes.json", key="themes"),
-            items=self.read_projection(filename="index.json", key="items"),
+            items=self.read_projection(filename=ProjectionFiles.INDEX, key="items"),
         )
 
     def read_projection(self, filename: str, key: str) -> list[dict[str, Any]]:
@@ -308,18 +320,20 @@ class _Routes:
     def existing_ids(
         self,
     ) -> set[str]:
-        ids = {it["id"] for it in self.read_projection(filename="index.json", key="items")}
+        ids = {it["id"] for it in self.read_projection(filename=ProjectionFiles.INDEX, key="items")}
         ids |= set(self.archive.item_ids()) | self.archive.proposed_ids()
         return ids
 
     def _register_public_routes(self) -> None:
         """The public surface and the auth flows."""
-        app = self.app
-        archive = self.archive
-        client = self.client
-        data_dir = self.data_dir
-        session_user = self.session_user
-        _projection_document = self.projection_document
+        app, archive, client, data_dir, session_user, _projection_document = (
+            self.app,
+            self.archive,
+            self.client,
+            self.data_dir,
+            self.session_user,
+            self.projection_document,
+        )
 
         @app.get("/api/health")
         def health() -> dict[str, Any]:
@@ -347,7 +361,7 @@ class _Routes:
             session = session_user(request)
             if session is None:
                 return JSONResponse(ErrorAnswer("sign in to read the archive").to_dict(), status_code=401)
-            if not (data_dir / "index.json").is_file():
+            if not (data_dir / ProjectionFiles.INDEX).is_file():
                 # A missing projection is an operator error, not an empty archive:
                 # the home must say so instead of "0 items".
                 return JSONResponse(
@@ -356,7 +370,7 @@ class _Routes:
                 )
             return {
                 "me": auth.me_payload(archive, session).to_dict(),
-                "index": _projection_document("index.json"),
+                "index": _projection_document(ProjectionFiles.INDEX),
                 "people": _projection_document("people.json"),
                 "places": _projection_document("places.json"),
                 "themes": _projection_document("themes.json"),
@@ -420,13 +434,15 @@ class _Routes:
 
     def _register_capture_routes(self) -> None:
         """The memory-capture surface: assess, save and delete."""
-        app = self.app
-        archive = self.archive
-        client = self.client
-        data_dir = self.data_dir
-        narrator = self.narrator
-        knowledge = self.knowledge
-        existing_ids = self.existing_ids
+        app, archive, client, data_dir, narrator, knowledge, existing_ids = (
+            self.app,
+            self.archive,
+            self.client,
+            self.data_dir,
+            self.narrator,
+            self.knowledge,
+            self.existing_ids,
+        )
 
         @app.post("/api/assess", response_model=None)
         def assess(request: Request, body: Mapping[str, Any]) -> dict[str, Any] | JSONResponse:
@@ -448,9 +464,9 @@ class _Routes:
 
         @app.post("/api/save", response_model=None)
         def save(request: Request, body: Mapping[str, Any]) -> dict[str, Any] | JSONResponse:
-            mine = narrator(request)
-            if mine is None:
-                return JSONResponse(ErrorAnswer("sign in to tell a story").to_dict(), status_code=401)
+            mine = _narrator_or_401(narrator, request, message="sign in to tell a story")
+            if isinstance(mine, JSONResponse):
+                return mine
             fields = SaveRequest.from_dict(body)
             # typed answers to date questions arrive as pending facts (value
             # null) — the model asserts their value/precision, the library
@@ -495,9 +511,9 @@ class _Routes:
         def delete(request: Request, body: Mapping[str, Any]) -> dict[str, Any] | JSONResponse:
             """Abandon: the draft is superseded with a tombstone — append-only,
             the files stay, the newest version says deleted (user)."""
-            mine = narrator(request)
-            if mine is None:
-                return JSONResponse(ErrorAnswer("sign in to tell a story").to_dict(), status_code=401)
+            mine = _narrator_or_401(narrator, request, message="sign in to tell a story")
+            if isinstance(mine, JSONResponse):
+                return mine
             try:
                 fields = DeleteRequest.from_dict(body)
             except ValueError as exc:
@@ -508,10 +524,12 @@ class _Routes:
 
     def _register_review_routes(self) -> None:
         """The import-review opening turn and the chat turn."""
-        app = self.app
-        archive = self.archive
-        live = self.live
-        narrator = self.narrator
+        app, archive, live, narrator = (
+            self.app,
+            self.archive,
+            self.live,
+            self.narrator,
+        )
 
         @app.post("/api/review/start", response_model=None)
         def review_start(request: Request, body: Mapping[str, Any]) -> dict[str, Any] | JSONResponse:
@@ -519,9 +537,9 @@ class _Routes:
             attempt-separated: a fresh attempt starts only when
             the last is empty or finished, so a mid-walk re-render continues
             the same walk and the diagnosis never mixes attempts."""
-            mine = narrator(request)
-            if mine is None:
-                return JSONResponse(ErrorAnswer("sign in to review the import").to_dict(), status_code=401)
+            mine = _narrator_or_401(narrator, request, message="sign in to review the import")
+            if isinstance(mine, JSONResponse):
+                return mine
             try:
                 fields = ReviewStartRequest.from_dict(body)
             except ValueError as exc:
@@ -546,9 +564,9 @@ class _Routes:
             """Record one of the app's own rendered lines (the opening, the
             claim) so the transcript is exactly what the family saw (user:
             "when you load a given transcript, you see exactly what I saw")."""
-            mine = narrator(request)
-            if mine is None:
-                return JSONResponse(ErrorAnswer("sign in to review the import").to_dict(), status_code=401)
+            mine = _narrator_or_401(narrator, request, message="sign in to review the import")
+            if isinstance(mine, JSONResponse):
+                return mine
             try:
                 fields = ReviewMessageRequest.from_dict(body)
             except ValueError as exc:
@@ -565,11 +583,13 @@ class _Routes:
 
     def _register_review_decide_route(self) -> None:
         """The import-review decision."""
-        app = self.app
-        archive = self.archive
-        live = self.live
-        data_dir = self.data_dir
-        narrator = self.narrator
+        app, archive, live, data_dir, narrator = (
+            self.app,
+            self.archive,
+            self.live,
+            self.data_dir,
+            self.narrator,
+        )
 
         @app.post("/api/review/decide", response_model=None)
         def review_decide(request: Request, body: Mapping[str, Any]) -> dict[str, Any] | JSONResponse:
@@ -579,9 +599,9 @@ class _Routes:
             pending (→ the import's guess stays proposed), delete (→ gone).
             The decision vocabulary is NOT the status vocabulary: "confirm" is
             a status, never an action."""
-            mine = narrator(request)
-            if mine is None:
-                return JSONResponse(ErrorAnswer("sign in to review the import").to_dict(), status_code=401)
+            mine = _narrator_or_401(narrator, request, message="sign in to review the import")
+            if isinstance(mine, JSONResponse):
+                return mine
             try:
                 fields = ReviewDecideRequest.from_dict(body)
             except ValueError as exc:
@@ -647,11 +667,13 @@ class _Routes:
 
     def _register_review_text_route(self) -> None:
         """The free-text review against the claim."""
-        app = self.app
-        archive = self.archive
-        client = self.client
-        live = self.live
-        narrator = self.narrator
+        app, archive, client, live, narrator = (
+            self.app,
+            self.archive,
+            self.client,
+            self.live,
+            self.narrator,
+        )
 
         @app.post("/api/review/text", response_model=None)
         def review_text(request: Request, body: Mapping[str, Any]) -> dict[str, Any] | JSONResponse:
@@ -660,9 +682,9 @@ class _Routes:
             the proposed record and is recorded verbatim) or off-topic (the
             chat names the mismatch and steers back). The model never derives
             relationships — the reviewer's words are the record or nothing is."""
-            mine = narrator(request)
-            if mine is None:
-                return JSONResponse(ErrorAnswer("sign in to review the import").to_dict(), status_code=401)
+            mine = _narrator_or_401(narrator, request, message="sign in to review the import")
+            if isinstance(mine, JSONResponse):
+                return mine
             try:
                 fields = ReviewTextRequest.from_dict(body)
             except ValueError as exc:
@@ -814,10 +836,12 @@ class _Routes:
 
     def _register_sync_batches_route(self) -> None:
         """The sync agent’s batch list and its drafts."""
-        app = self.app
-        session_user = self.session_user
-        work_dir = self.work_dir
-        registry_dir = self.registry_dir
+        app, session_user, work_dir, registry_dir = (
+            self.app,
+            self.session_user,
+            self.work_dir,
+            self.registry_dir,
+        )
 
         @app.get("/api/sync/batches")
         def sync_batches(request: Request) -> Any:
@@ -855,10 +879,12 @@ class _Routes:
 
     def _register_sync_drafts_route(self) -> None:
         """The sync agent’s drafts."""
-        app = self.app
-        session_user = self.session_user
-        work_dir = self.work_dir
-        registry_dir = self.registry_dir
+        app, session_user, work_dir, registry_dir = (
+            self.app,
+            self.session_user,
+            self.work_dir,
+            self.registry_dir,
+        )
 
         @app.get("/api/sync/batch/{batch_id}/drafts")
         def sync_drafts(batch_id: str, request: Request) -> Any:
@@ -947,12 +973,21 @@ class _Routes:
 
     def _register_sync_page_routes(self) -> None:
         """The sync agent’s page reads and its reprocess/rotate/reread actions."""
-        app = self.app
-        session_user = self.session_user
-        work_dir = self.work_dir
-        registry_dir = self.registry_dir
-        _read_projection = self.read_projection
-        _reprocess = self.reprocess
+        app, session_user, work_dir, registry_dir, _read_projection, _reprocess = (
+            self.app,
+            self.session_user,
+            self.work_dir,
+            self.registry_dir,
+            self.read_projection,
+            self.reprocess,
+        )
+
+        def _start_processing(batch_id: str, page: str) -> dict[str, Any]:
+            """Record the job and hand the page to the reprocess seam — the
+            rotate and re-read routes' one way through."""
+            set_page_job(batch_id, page, "transcribing", work_dir)
+            (_reprocess or _reprocess_page)(batch_id, page)
+            return PageProcessingAnswer(batch_id=batch_id, page=page, processing=True).to_dict()
 
         @app.get("/api/sync/batch/{batch_id}/page/{page}")
         def sync_page(batch_id: str, page: str, request: Request) -> Any:
@@ -1037,9 +1072,7 @@ class _Routes:
                 return JSONResponse({"error": str(exc)}, status_code=400)
             if not rotated:
                 return PageProcessingAnswer(batch_id=batch_id, page=page, processing=False).to_dict()
-            set_page_job(batch_id, page, "transcribing", work_dir)
-            (_reprocess or _reprocess_page)(batch_id, page)
-            return PageProcessingAnswer(batch_id=batch_id, page=page, processing=True).to_dict()
+            return _start_processing(batch_id, page)
 
         @app.post("/api/sync/batch/{batch_id}/page/{page}/reread")
         def sync_reread_page(batch_id: str, page: str, request: Request) -> Any:
@@ -1051,17 +1084,17 @@ class _Routes:
                 return JSONResponse(ErrorAnswer("sign in to re-read pages").to_dict(), status_code=401)
             if not BATCH_ID.match(batch_id) or not safe_page_name(page):
                 return JSONResponse({"error": "invalid batch or page name"}, status_code=400)
-            set_page_job(batch_id, page, "transcribing", work_dir)
-            (_reprocess or _reprocess_page)(batch_id, page)
-            return PageProcessingAnswer(batch_id=batch_id, page=page, processing=True).to_dict()
+            return _start_processing(batch_id, page)
 
     def _register_row_adjustment_route(self) -> None:
         """The sync agent’s drawn row corrections."""
-        app = self.app
-        archive = self.archive
-        narrator = self.narrator
-        work_dir = self.work_dir
-        registry_dir = self.registry_dir
+        app, archive, narrator, work_dir, registry_dir = (
+            self.app,
+            self.archive,
+            self.narrator,
+            self.work_dir,
+            self.registry_dir,
+        )
 
         @app.post("/api/sync/batch/{batch_id}/page/{page}/row-adjustments")
         def sync_row_adjustments(
@@ -1076,9 +1109,9 @@ class _Routes:
             drew and what it produced. A page without persisted words (read
             before the read stage wrote them) is refused with the remedy —
             never a silent empty build."""
-            mine = narrator(request)
-            if mine is None:
-                return JSONResponse(ErrorAnswer("sign in to correct rows").to_dict(), status_code=401)
+            mine = _narrator_or_401(narrator, request, message="sign in to correct rows")
+            if isinstance(mine, JSONResponse):
+                return mine
             if not BATCH_ID.match(batch_id) or not safe_page_name(page):
                 return JSONResponse({"error": "invalid batch or page name"}, status_code=400)
             try:
@@ -1108,13 +1141,15 @@ class _Routes:
 
     def _register_sync_decision_routes(self) -> None:
         """The sync agent’s approvals and confirmations."""
-        app = self.app
-        archive = self.archive
-        data_dir = self.data_dir
-        narrator = self.narrator
-        session_user = self.session_user
-        work_dir = self.work_dir
-        registry_dir = self.registry_dir
+        app, archive, data_dir, narrator, session_user, work_dir, registry_dir = (
+            self.app,
+            self.archive,
+            self.data_dir,
+            self.narrator,
+            self.session_user,
+            self.work_dir,
+            self.registry_dir,
+        )
 
         @app.post("/api/sync/approvals")
         def sync_approvals(payload: Mapping[str, Any], request: Request) -> Any:
@@ -1156,9 +1191,9 @@ class _Routes:
             """The backend receiver: validate, record (the agreed document becomes
             its archive item; the registry records the review), re-publish the
             projection. The frontend never writes the archive."""
-            mine = narrator(request)
-            if mine is None:
-                return JSONResponse(ErrorAnswer("sign in to send confirmations").to_dict(), status_code=401)
+            mine = _narrator_or_401(narrator, request, message="sign in to send confirmations")
+            if isinstance(mine, JSONResponse):
+                return mine
             try:
                 confirmation = ConfirmationRequest.from_dict(payload)
                 item_id = record_confirmation(
@@ -1182,18 +1217,13 @@ class _Routes:
 
     def _register_identify_routes(self) -> None:
         """The identification surface: one item, then the decision."""
-        app = self.app
-        archive = self.archive
-        client = self.client
-        data_dir = self.data_dir
-        narrator = self.narrator
-        session_user = self.session_user
-
-        def _identification_pending(item: Item) -> int:
-            """How many of the document's entities still wait on a decision — the
-            proposed refs. A confirmed or guessed one is settled (left for later
-            stays proposed: it still waits)."""
-            return sum(1 for ref in item.people_refs + item.place_refs if ref.status == "proposed")
+        app, archive, client, data_dir, session_user = (
+            self.app,
+            self.archive,
+            self.client,
+            self.data_dir,
+            self.session_user,
+        )
 
         def _identification_records(item: Item) -> tuple[tuple[Person, ...], tuple[Place, ...]]:
             """The records the document's refs name — the surface renders their
@@ -1252,18 +1282,25 @@ class _Routes:
                 archive.publish(data_dir)
                 item = archive.get_item(item_id) or item
             people, places = _identification_records(item)
-            return IdentifyAnswer(
-                item=item, people=people, places=places, pending=_identification_pending(item)
-            ).to_dict()
+            return IdentifyAnswer(item=item, people=people, places=places, pending=item.pending_refs()).to_dict()
+
+    def _register_identify_decide_route(self) -> None:
+        """The identification decision."""
+        app, archive, data_dir, narrator = (
+            self.app,
+            self.archive,
+            self.data_dir,
+            self.narrator,
+        )
 
         @app.post("/api/identify/decide")
         def identify_decide(body: Mapping[str, Any], request: Request) -> Any:
             """One stage-8 determination: the mention on the document and the
             record in the identity table move together (the archive's seam), and
             the answer carries what remains."""
-            mine = narrator(request)
-            if mine is None:
-                return JSONResponse(ErrorAnswer("sign in to identify the documents").to_dict(), status_code=401)
+            mine = _narrator_or_401(narrator, request, message="sign in to identify the documents")
+            if isinstance(mine, JSONResponse):
+                return mine
             try:
                 fields = IdentifyDecideRequest.from_dict(body)
             except (TypeError, ValueError) as exc:
@@ -1287,7 +1324,7 @@ class _Routes:
                 return JSONResponse(ErrorAnswer(f"no {fields.kind} {fields.entity_id}").to_dict(), status_code=404)
             archive.publish(data_dir)
             item = archive.get_item(fields.item_id)
-            pending = _identification_pending(item) if item is not None else 0
+            pending = item.pending_refs() if item is not None else 0
             return IdentifyDecideAnswer(
                 kind=fields.kind,
                 entity=record.to_dict(),
@@ -1302,10 +1339,12 @@ class _Routes:
 
     def _register_pending_routes(self) -> None:
         """The sync pending merge, its received marker, and the projection files (the catch-all, last)."""
-        app = self.app
-        data_dir = self.data_dir
-        outbox = self.outbox
-        session_user = self.session_user
+        app, data_dir, outbox, session_user = (
+            self.app,
+            self.data_dir,
+            self.outbox,
+            self.session_user,
+        )
 
         @app.get("/api/sync/pending")
         def sync_pending(request: Request) -> Any:
@@ -1385,11 +1424,6 @@ def build_app(
         outbox=outbox,
         reprocess=_reprocess,
     )
-    routes._register_public_routes()
-    routes._register_capture_routes()
-    routes._register_review_routes()
-    routes._register_review_decide_route()
-    routes._register_review_text_route()
     if not family_members():
         logger.warning(
             "family: THE_LOFT_FAMILY_MEMBERS is empty — nobody can read the archive "
@@ -1405,14 +1439,24 @@ def build_app(
                 "y" if len(malformed) == 1 else "ies",
                 ", ".join(malformed),
             )
-    routes._register_middleware()
-    routes._register_sync_batches_route()
-    routes._register_sync_drafts_route()
-    routes._register_sync_page_routes()
-    routes._register_row_adjustment_route()
-    routes._register_sync_decision_routes()
-    routes._register_identify_routes()
-    routes._register_pending_routes()
+    # the surface's registration order is the order the routes are added
+    for register in (
+        routes._register_public_routes,
+        routes._register_capture_routes,
+        routes._register_review_routes,
+        routes._register_review_decide_route,
+        routes._register_review_text_route,
+        routes._register_middleware,
+        routes._register_sync_batches_route,
+        routes._register_sync_drafts_route,
+        routes._register_sync_page_routes,
+        routes._register_row_adjustment_route,
+        routes._register_sync_decision_routes,
+        routes._register_identify_routes,
+        routes._register_identify_decide_route,
+        routes._register_pending_routes,
+    ):
+        register()
     app.mount("/", StaticFiles(directory=str(app_dir), html=True), name="app")
     return app
 

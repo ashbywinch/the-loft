@@ -28,6 +28,7 @@ from tools.assessment import Assessment
 from tools.assessment_fact import AssessmentFact
 from tools.extraction import Extraction
 from tools.memory import Knowledge, assess
+from tools.projection import ProjectionFiles
 from tools.question import Question
 
 AssertFn = Callable[[Assessment], list[str]]
@@ -41,7 +42,7 @@ def load_projection() -> Knowledge:
         people=json.loads((data / "people.json").read_text(encoding="utf-8"))["people"],
         places=json.loads((data / "places.json").read_text(encoding="utf-8"))["places"],
         themes=json.loads((data / "themes.json").read_text(encoding="utf-8"))["themes"],
-        items=json.loads((data / "index.json").read_text(encoding="utf-8"))["items"],
+        items=json.loads((data / ProjectionFiles.INDEX).read_text(encoding="utf-8"))["items"],
     )
 
 

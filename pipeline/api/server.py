@@ -932,7 +932,11 @@ def build_app(
             # a photo/drawing page skips orientation entirely (the grouping
             # scorer puts the postcard's picture side into its document —
             # the review surface must still see the image)
-            record = load_batch(batch_id, registry_dir)
+            try:
+                record = load_batch(batch_id, registry_dir)
+            except RegistryError:
+                # an unknown batch is the client's mistake, never a 500
+                return JSONResponse({"error": f"no such batch: {batch_id}"}, status_code=404)
             source = record.path / page
             if not source.is_file():
                 return JSONResponse({"error": "no such page"}, status_code=404)

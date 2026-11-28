@@ -291,6 +291,12 @@ class ConfirmationPayload:
             raise ValueError(f"confirmation status must be confirmed|rejected, got {payload['status']!r}")
         if not isinstance(payload["pages"], list) or not payload["pages"]:
             raise ValueError("confirmation pages must be a non-empty list")
+        # each name becomes a path segment in the drafts read: a name carrying a
+        # separator or ".." was accepted here and then made /drafts answer 400
+        # for the WHOLE batch (review, 2026-11-14)
+        bad = [page for page in payload["pages"] if not isinstance(page, str) or not safe_page_name(page)]
+        if bad:
+            raise ValueError(f"confirmation pages are not page names: {bad}")
         # doc_index becomes a registry boundary index and a file name — a float
         # (1e309 -> OverflowError) or bool would slip past the server's int()
         # and 500 instead of 400 (the receiver's "client errors are 4xx, never

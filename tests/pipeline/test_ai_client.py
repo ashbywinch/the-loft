@@ -26,7 +26,9 @@ class FakeResponse:
     def __init__(self, payload: object, headers: dict[str, str] | None = None) -> None:
         self._payload: str = payload if isinstance(payload, str) else json.dumps(payload)
         # a real response carries headers (`cf-aig-cache-status` among them)
+        # and the status the client names when the body is unreadable
         self.headers: dict[str, str] = headers or {}
+        self.status: int = 200
 
     def read(self) -> bytes:
         return self._payload.encode("utf-8")
@@ -253,6 +255,27 @@ def test_chat_gives_up_after_max_retries() -> None:
     client = AIClient(api_key="k", urlopen=urlopen, max_retries=2, _sleep=lambda _s: None)
     with pytest.raises(AIClientError):
         client.chat("s", "u")
+
+
+def test_a_body_that_is_not_json_is_retried_as_a_transport_failure() -> None:
+    """The gateway answered 200 with a whitespace body (measured in CI
+    2026-11-24: every review eval errored at the same byte offset). A 200 with
+    no JSON is the transport failing, not an answer, so it costs a retry."""
+    sleeps: list[float] = []
+    urlopen, calls = make_fake_urlopen(
+        [FakeResponse(" \n  \n "), FakeResponse({"choices": [{"message": {"content": '{"ok": true}'}}]})]
+    )
+    client = AIClient(api_key="k", urlopen=urlopen, _sleep=sleeps.append, max_retries=2)
+    assert client.chat("s", "u") == '{"ok": true}'
+    assert len(calls) == 2
+
+
+def test_a_body_that_is_not_json_fails_with_its_status_when_the_budget_is_spent() -> None:
+    urlopen, calls = make_fake_urlopen([FakeResponse("   ") for _ in range(3)])
+    client = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda _: None, max_retries=2)
+    with pytest.raises(AIClientError, match="no JSON"):
+        client.chat("s", "u")
+    assert len(calls) == 3
 
 
 def test_chat_retries_without_reasoning_params_on_400() -> None:

@@ -16,7 +16,6 @@ from typing import Any
 import pytest
 
 from loft.live.compat_reviews import ImportsCompatibility
-from loft.live.memory import MemoryLiveStore
 from loft.live.review_writes import ReviewWrites
 from loft.live.store import LiveStore
 from tools.archive import Archive
@@ -29,7 +28,7 @@ def host(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[tuple[Any, 
     if request.param == "sqlite":
         live = LiveStore.create(tmp_path / "loft.db", app_version="test")
     else:
-        live = MemoryLiveStore(app_version="test")
+        live = LiveStore.in_memory(app_version="test")
     archive = Archive(MemoryStore())
     export = ImportsCompatibility(live, archive)
     writes = ReviewWrites(live)

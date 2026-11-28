@@ -16,8 +16,8 @@ class DeviceGrant:
     MAX_AGE_SECONDS = 1800  # google's device codes live ~30 min
 
     def __init__(self, device_code: str, created_at: float) -> None:
-        self.device_code = device_code
-        self.created_at = created_at
+        self.device_code: str = device_code
+        self.created_at: float = created_at
 
     @classmethod
     def started(cls, device_code: str) -> DeviceGrant:

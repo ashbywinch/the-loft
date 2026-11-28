@@ -52,8 +52,8 @@ class PageCompatibility:
     """Write one page's correction into the old work tree."""
 
     def __init__(self, store: PageStore, work_dir: Path) -> None:
-        self.store = store
-        self.work_dir = work_dir
+        self.store: PageStore = store
+        self.work_dir: Path = work_dir
 
     def write(self, page_id: str) -> tuple[str, ...]:
         """Write the page's drawn lines and the rows they made; return the

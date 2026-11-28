@@ -12,7 +12,7 @@ import gedcom7
 
 from loft.live.compat import CompatibilityExport
 from loft.live.import_identity import sync_from_archive
-from loft.live.memory import MemoryLiveStore
+from loft.live.store import LiveStore
 from tools.archive import Archive
 from tools.gedcom_date import GedcomDate
 from tools.gedcom_document import GedcomDocument
@@ -98,7 +98,7 @@ def test_the_flipped_identity_tables_still_export_to_gedcom_7() -> None:
     GEDCOM export's input, so a person confirmed through the live service must
     leave the archive in a standards-parseable GEDCOM 7 document."""
     archive = make_archive()
-    live = MemoryLiveStore(app_version="test")
+    live = LiveStore.in_memory(app_version="test")
     archive.bind_identity_service(live.identities, CompatibilityExport(live, archive).write)
     sync_from_archive(live, archive)
     archive.confirm_person("p-stranger", actor="p-editor")  # the flipped archive verb

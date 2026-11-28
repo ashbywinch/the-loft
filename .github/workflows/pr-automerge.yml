@@ -36,8 +36,13 @@ jobs:
       github.event.pull_request.user.login != 'dependabot[bot]'
     permissions:
       contents: read
-    # v0.2.7, pinned to its commit: this job receives the App's private key.
-    uses: ashbywinch/omp-config/.github/workflows/pr-automerge.yml@6f84dd155322efcc12502813b1b3b9b336f28edd
+    # v0.2.13 plus 33231ff (the run approver defined for every event), pinned
+    # to its commit: this job receives the App's private key. v0.2.12 moved the
+    # schedule/push fallback's approver call into the reusable workflow but
+    # defined the function only inside the PR-event branch, so the hourly sweep
+    # died with `command not found` (2026-11-28); 33231ff hoists it above the
+    # event switch.
+    uses: ashbywinch/omp-config/.github/workflows/pr-automerge.yml@33231ff93ab1076ab5dce3b2e5431cf8a15aa7c7
     with:
       app_id: ${{ vars.OMP_APP_ID }}
     secrets:

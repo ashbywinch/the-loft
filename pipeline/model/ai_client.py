@@ -53,7 +53,18 @@ class Attempt:
 
 
 # What one send came back as: the endpoint's answer, parsed, or its refusal.
-_SendResult = Attempt | urllib.error.HTTPError
+@dataclass(frozen=True)
+class _UnreadableBody:
+    """A 200 whose body is not JSON: the gateway failing, not an answer.
+
+    Kept as a send result rather than raised, because what to do with it is a
+    decision, and ``_next_step`` is the one place decisions live."""
+
+    status: int
+    body: str
+
+
+_SendResult = Attempt | urllib.error.HTTPError | _UnreadableBody
 
 
 @dataclass(frozen=True)
@@ -131,6 +142,7 @@ def _parse_attempt(body: Mapping[str, Any], headers: Mapping[str, str], requeste
 
 
 @final
+# lucidlint: ignore partition the step methods are _next_step's cases, not a second owner — one retry policy
 class AIClient:
     # The endpoint and the model aliases live in ModelConfig — the one file
     # that names the models. This is the Cloudflare AI Gateway
@@ -307,14 +319,20 @@ class AIClient:
         )
         try:
             with self._urlopen(request, timeout=self.timeout) as response:
-                attempt = _parse_attempt(
-                    json.loads(response.read().decode("utf-8")),
-                    response.headers,
-                    payload.reasoning is not None and payload.reasoning.enabled,
-                )
+                body = response.read().decode("utf-8", "replace")
+                status = response.status
+                headers = response.headers
         except urllib.error.HTTPError as refusal:
             # the endpoint refused the send; ``_next_step`` decides what that means
             return refusal
+        try:
+            attempt = _parse_attempt(
+                json.loads(body), headers, payload.reasoning is not None and payload.reasoning.enabled
+            )
+        except json.JSONDecodeError:
+            # read and parsed outside the socket's lifetime: a body that is not
+            # JSON is a result to decide on, not an exception to leak
+            return _UnreadableBody(status=status, body=body)
         self._take_reasoning(attempt)
         return attempt
 
@@ -325,6 +343,11 @@ class AIClient:
 
         The cases, one branch each:
 
+        * a body that is not JSON — send again on the backoff while the budget
+          lasts, else fail with the status and the body, because a 200 with no
+          JSON is the gateway failing rather than an answer (measured
+          2026-11-24: a whitespace body, and every review eval errored at the
+          same byte offset because the decode error escaped the loop);
         * refusal, a retryable status (429/5xx) with retry budget left — send
           again on the backoff, because the endpoint is busy, not broken;
         * refusal, a retryable status, budget exhausted — fail with the body,
@@ -347,34 +370,73 @@ class AIClient:
           lasts, else fail, because a 200 with no content is a transient
           provider failure.
         """
+        if isinstance(send_result, _UnreadableBody):
+            return self._unreadable_body_step(
+                send_result, payload, attempts_made=attempts_made, fresh_sample_taken=fresh_sample_taken
+            )
         if isinstance(send_result, urllib.error.HTTPError):
-            error = send_result
-            if error.code in _RETRYABLE_STATUSES:
-                if attempts_made >= self.max_retries:
-                    return _Failure(_failure_message(error), cause=error)
-                return _NextSend(payload, uses_backoff=True, fresh_sample_taken=fresh_sample_taken)
-            if error.code in _REASONING_REFUSED_STATUSES and payload.reasoning is not None:
-                logger.warning(
-                    "model %s rejected the reasoning params (HTTP %d); retrying without them",
-                    self.model,
-                    error.code,
-                )
-                # temperature follows the reasoning state too: a rejected
-                # reasoning param must not leave the retry running at the
-                # reasoning 0.3 — it is a non-reasoning call at 0.0
-                return _NextSend(
-                    replace(payload, reasoning=None, temperature=0.0),
-                    fresh_sample_taken=fresh_sample_taken,
-                )
-            # any other status is a HARD client error — a bad model name, an
-            # expired key, a wrong endpoint. Report it with the body, once.
-            # Letting it fall through to the empty-completion path read a 400
-            # "Invalid model name" as "empty response from API
-            # (finish_reason=n/a)" and retried it as if transient: the real
-            # failure stayed invisible for a whole session (2026-10-19).
-            return _Failure(_failure_message(error), cause=error)
+            return self._http_error_step(
+                send_result, payload, attempts_made=attempts_made, fresh_sample_taken=fresh_sample_taken
+            )
+        return self._attempt_step(
+            send_result, payload, attempts_made=attempts_made, fresh_sample_taken=fresh_sample_taken
+        )
 
-        attempt = send_result
+    def _unreadable_body_step(
+        self, send_result: _UnreadableBody, payload: ChatRequest, *, attempts_made: int, fresh_sample_taken: bool
+    ) -> _Failure | _NextSend:
+        """A body that is not JSON: send again on the backoff while the budget
+        lasts, else fail with the status and the body (a 200 with no JSON is
+        the gateway failing, not an answer)."""
+        if attempts_made >= self.max_retries:
+            return _Failure(
+                f"API answered HTTP {send_result.status} with no JSON "
+                f"({len(send_result.body)} bytes): {send_result.body[:200]!r}"
+            )
+        logger.warning(
+            "chat: HTTP %s with a non-JSON body (%d bytes) — retrying",
+            send_result.status,
+            len(send_result.body),
+        )
+        return _NextSend(payload, uses_backoff=True, fresh_sample_taken=fresh_sample_taken)
+
+    def _http_error_step(
+        self, error: urllib.error.HTTPError, payload: ChatRequest, *, attempts_made: int, fresh_sample_taken: bool
+    ) -> _Failure | _NextSend:
+        """An HTTP failure: retry a retryable status while the budget lasts,
+        drop rejected reasoning params once, and fail every other status with
+        the body."""
+        if error.code in _RETRYABLE_STATUSES:
+            if attempts_made >= self.max_retries:
+                return _Failure(_failure_message(error), cause=error)
+            return _NextSend(payload, uses_backoff=True, fresh_sample_taken=fresh_sample_taken)
+        if error.code in _REASONING_REFUSED_STATUSES and payload.reasoning is not None:
+            logger.warning(
+                "model %s rejected the reasoning params (HTTP %d); retrying without them",
+                self.model,
+                error.code,
+            )
+            # temperature follows the reasoning state too: a rejected
+            # reasoning param must not leave the retry running at the
+            # reasoning 0.3 — it is a non-reasoning call at 0.0
+            return _NextSend(
+                replace(payload, reasoning=None, temperature=0.0),
+                fresh_sample_taken=fresh_sample_taken,
+            )
+        # any other status is a HARD client error — a bad model name, an
+        # expired key, a wrong endpoint. Report it with the body, once.
+        # Letting it fall through to the empty-completion path read a 400
+        # "Invalid model name" as "empty response from API
+        # (finish_reason=n/a)" and retried it as if transient: the real
+        # failure stayed invisible for a whole session (2026-10-19).
+        return _Failure(_failure_message(error), cause=error)
+
+    def _attempt_step(
+        self, attempt: Attempt, payload: ChatRequest, *, attempts_made: int, fresh_sample_taken: bool
+    ) -> _Answer | _Failure | _NextSend:
+        """A decoded attempt: answer its content, recover the answer the
+        provider put in the reasoning channel, or rescue/retry the empty
+        draws by their own rule."""
         if attempt.content.strip():
             return _Answer(attempt.content)
         if attempt.reasoning.enabled and attempt.finish_reason == "length" and not fresh_sample_taken:

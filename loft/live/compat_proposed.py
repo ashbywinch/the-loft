@@ -22,8 +22,8 @@ class ProposedCompatibility:
     """Maintain the old proposed-queue files from the live rows."""
 
     def __init__(self, store: IdentityStore, archive: Archive) -> None:
-        self.store = store
-        self.archive = archive
+        self.store: IdentityStore = store
+        self.archive: Archive = archive
 
     def write(self) -> tuple[str, ...]:
         """Write a file for every proposed row, remove one whose row is

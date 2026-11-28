@@ -28,7 +28,7 @@ def _expire_the_grace(state: str) -> None:
 
 
 def test_session_cookie_round_trips() -> None:
-    cookie = auth._make_session_cookie(SessionUser("alex@example.com", "Alex Hale", "pic"))
+    cookie = auth.session_cookie(SessionUser("alex@example.com", "Alex Hale", "pic"))
     session = auth.session_user_from_cookie(f"session={cookie}; other=1")
     assert session == SessionUser("alex@example.com", "Alex Hale", "pic")
 
@@ -40,7 +40,7 @@ def test_session_identity_casefolds_the_email() -> None:
 
 
 def test_session_cookie_rejects_tampering() -> None:
-    cookie = auth._make_session_cookie(SessionUser("alex@example.com", "Alex Hale", ""))
+    cookie = auth.session_cookie(SessionUser("alex@example.com", "Alex Hale", ""))
     tampered = cookie[:-4] + ("AAAA" if cookie[-4:] != "AAAA" else "BBBB")
     assert auth.session_user_from_cookie(tampered) is None
     assert auth.session_user_from_cookie(None) is None
@@ -70,6 +70,19 @@ def test_login_fails_honestly_without_a_client(monkeypatch: pytest.MonkeyPatch) 
     assert "not configured" in result.detail
 
 
+def test_login_asks_for_the_account_chooser(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The gate's "sign in as someone else" must be able to pick a different
+    Google account: the flow always asks for the chooser. Without it Google
+    silently re-enters with the remembered account, so the button would lie."""
+    # lucidlint: ignore monkeypatch the test's subject is the env seam — the client config builds the flow
+    monkeypatch.setenv("THE_LOFT_GOOGLE_WEB_CLIENT_ID", "client")
+    # lucidlint: ignore monkeypatch same env seam — the pair configures the client
+    monkeypatch.setenv("THE_LOFT_GOOGLE_WEB_CLIENT_SECRET", "secret")
+    result = auth.login_url()
+    assert result.status == "ok"
+    assert "prompt=select_account" in result.auth_url
+
+
 def test_me_payload_uses_the_archive_person(monkeypatch: pytest.MonkeyPatch) -> None:
     # lucidlint: ignore monkeypatch the test's subject is the env seam — the client config drives the flow
     monkeypatch.setenv("THE_LOFT_GOOGLE_WEB_CLIENT_ID", "client")
@@ -83,7 +96,7 @@ def test_me_payload_uses_the_archive_person(monkeypatch: pytest.MonkeyPatch) -> 
             {"people": [{"id": "p-alex", "name": "Alex Hale", "email": "alex@example.com"}], "relationships": []},
         ),
     )
-    cookie = f"{auth.GoogleOAuth.COOKIE_NAME}={auth._make_session_cookie(SessionUser('alex@example.com', 'A', ''))}"
+    cookie = f"{auth.GoogleOAuth.COOKIE_NAME}={auth.session_cookie(SessionUser('alex@example.com', 'A', ''))}"
     session = auth.session_user_from_cookie(cookie)
     assert session is not None
     answer = auth.me_payload(archive, session)

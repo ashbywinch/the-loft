@@ -20,7 +20,7 @@ class PageWrites:
     """The page's write surface: the review's row correction, one change."""
 
     def __init__(self, store: PageStore) -> None:
-        self.store = store
+        self.store: PageStore = store
 
     def correct_rows(self, page_id: str, adjustments: bytes, *, actor: str) -> PageState:
         """Record the reviewer's drawn lines as the page's current correction."""

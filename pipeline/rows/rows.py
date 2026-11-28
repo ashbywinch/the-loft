@@ -80,8 +80,8 @@ class Rows:
     """
 
     def __init__(self, words: list[Word], page_size: PageSize) -> None:
-        self.words = list(words)
-        self.page_size = page_size
+        self.words: list[Word] = list(words)
+        self.page_size: PageSize = page_size
 
     @classmethod
     def from_words(cls, words: list[Word], page_size: PageSize) -> Rows:
@@ -172,15 +172,15 @@ class _Claims:
         adjustments: RowAdjustments,
         page_size: PageSize,
     ) -> None:
-        self.words = words
+        self.words: list[Word] = words
         # a page the reader found no writing on has no rows — there is no
         # writing height to measure, and every caller downstream (the reading,
         # the review) is about rows that exist
-        self.unit = self._writing_height() if words else 0.0
-        self.spacing = _Claims.SPACING_RATIO * self.unit
-        self.touch = _Claims.TOUCH_FRACTION * self.unit
-        self.spans = _line_spans(adjustments, page_size)
-        self.page_size = page_size
+        self.unit: float = self._writing_height() if words else 0.0
+        self.spacing: float = _Claims.SPACING_RATIO * self.unit
+        self.touch: float = _Claims.TOUCH_FRACTION * self.unit
+        self.spans: list[_Span] = _line_spans(adjustments, page_size)
+        self.page_size: PageSize = page_size
         self.discounted: set[int] = set()
         self._owner_of: list[int | None] | None = None
 

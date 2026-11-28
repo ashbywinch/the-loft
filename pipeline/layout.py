@@ -808,7 +808,8 @@ class Anchor:
             self._trust_report_degrees,
         ) = report_line, match, text, width, height, trust_report_degrees
         self._box: list[float] | None = None
-        self._orientation = 0
+        self._orientation: int = 0
+        self._box_source: str = LayoutLine.BOX_SOURCE_POSITIONAL  # the provenance of the chosen box
         self._resolve()
 
     @property
@@ -839,7 +840,6 @@ class Anchor:
     def _resolve(self) -> None:
         report_line, match, text = self._report_line, self._match, self._text
         width, height = self._width, self._height
-        self._box_source: str = LayoutLine.BOX_SOURCE_POSITIONAL  # the provenance of the chosen box
         report_box = report_line.box if report_line else None
         if not (report_box and (report_box[2] > report_box[0] or report_box[3] > report_box[1])):
             self._box = match.box if match else None
@@ -1129,7 +1129,7 @@ class MultiAssembly:
     one produced."""
 
     def __init__(self, inputs: MultiInputs) -> None:
-        self._inputs = inputs
+        self._inputs: MultiInputs = inputs
         self.matches: list[LineMatch] = []
         self.unmatched: list[Detection] = []
         self.lines: list[LayoutLine] = []

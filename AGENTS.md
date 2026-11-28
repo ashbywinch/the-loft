@@ -119,7 +119,7 @@ default. Real content never lives in code (`docs/coding-standards.md`).
 ## Public repo (user)
 
 - The live repo is **the-loft** (github.com/ashbywinch/the-loft); local
-  `main` tracks `loft/main`. The private repo (family-history-album) is
+  `main` tracks `origin/main`. The private repo (family-history-album) is
   **frozen** — it keeps its full history but receives nothing; no local
   remote points at it.
 - Pushing is a normal `git push`: main is protected (the `build-and-test`

@@ -134,8 +134,9 @@ class Word:
 
     def to_dict(self) -> dict[str, Any]:
         """The word as its words.json record — the box and the measures it
-        has (an unmeasured word carries no measure keys)."""
-        out: dict[str, Any] = {"x0": self.x0, "y0": self.y0, "x1": self.x1, "y1": self.y1}
+        has (an unmeasured word carries no measure keys). The box's four keys
+        come from the rectangle's own record: one owner of that wire shape."""
+        out: dict[str, Any] = self.rect.to_dict()
         if self.line is not None:
             out["line"] = self.line
         if self.baseline is not None:

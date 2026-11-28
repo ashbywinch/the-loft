@@ -4,16 +4,26 @@
 # 2026-08-16, first full-repo run).
 
 [lucidlint]
-# record-shape: the family is FIXED IN CODE (2026-10-17) — every record is a
-# class in a file named after it, owning its wire format; `document/schemas.py`
-# (a TypedDict bag) is dissolved and ~150 record modules landed. What the rule
-# still reports is a TOOL BUG: it fires on the very pattern its own message
-# prescribes — `from_dict(cls, raw: dict[str, Any])`, `to_dict(self) ->
-# dict[str, Any]`, and the constant-key literal that method builds (the
-# serialization edge, where a bare dict is correct). The minimal repro and the
-# reasoning: docs/PLAN/lucidlint-review-log.md §1.5 and §2.2. The rule stays
-# ignored so the gate's verdict is not polluted by the tool's own bug; a NEW
-# bare dict for a record is still a finding at review.
+# record-shape: re-judged on 0.10.0 (2026-11-28) — the 2026-10-17 "tool bug"
+# claim was dead evidence: upstream #42/#46 closed 2026-11-04, before 0.7.1,
+# and 0.10.0 no longer fires on the dataclass to_dict form that note described.
+# The trigger, reduced from the real document/word.py:138 site: a constant-key
+# dict literal (>=2 keys) whose keys are not all members of the enclosing class
+# — a member is an attribute the class assigns (`self.x = ...`, annotated or
+# not); a `@property` is not; a key added after the literal (`out["k"] = ...`)
+# does not count. The repro table is docs/PLAN/lucidlint-review-log.md §1.5.
+# The delegation case is FIXED in code: Word.to_dict now builds from
+# Rectangle.to_dict (one owner of the box wire), pinned by
+# tests/document/test_word.py on words.json's key set and order.
+#
+# TEMPORARY (2026-11-28): this ignore is being REMOVED, one family per PR —
+# constant-key (this PR: Word delegates to Rectangle), then dict-return 47,
+# dict-of-record 42, fixed-tuple 35, list-of-records 25, map 8. The entry is
+# deleted in the PR that takes the last finding; nothing is baselined. The
+# trigger and the reduced repro are docs/PLAN/lucidlint-review-log.md §1.5.
+# Until then this note states what is still hidden, not a licence: a new bare
+# dict for a record is a review finding, and the config_ignored count is
+# reported every run.
 # global-state: the repo standard REQUIRES named constants and forbids the
 # thing this rule should catch — module-level mutable state. On 0.7.1 the rule
 # flags every module-level constant (348 on this tree); the repo's answer is

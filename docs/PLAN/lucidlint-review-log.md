@@ -58,33 +58,42 @@ a recoverable failure — the standard was tightened to say exactly this and
 `tools/ai_client.find_api_key`'s corrupt-file fallback (which was a genuine
 silently-degraded-config swallow) now raises instead (§ below).
 
-### 1.5 The `record-shape` rule fires on the class pattern its own message prescribes (2026-10-17)
+### 1.5 `record-shape`: the trigger is a constant-key literal whose keys are not all members (re-judged 2026-11-28 on 0.10.0)
 
-The message says: *"convert it to a class named with a domain noun, with named
-fields; a wire payload is still a record — give the class a to_dict()/to_json()
-at the serialization edge."* Write exactly that and the rule fires twice more:
+The 2026-10-17 note called this a tool bug from v0.5.0 probes. Upstream
+[#42](https://github.com/ashbywinch/lucidlint/issues/42) and
+[#46](https://github.com/ashbywinch/lucidlint/issues/46) closed on 2026-11-04,
+before 0.7.1 shipped, and 0.10.0 no longer fires on the dataclass `to_dict`
+form the note described. The current trigger, reduced from the real
+`document/word.py:138` site on 0.10.0:
 
-```python
-@dataclass(frozen=True)
-class Word:
-    x0: float
+| variant | shape | result |
+|---|---|---|
+| v1 | members `x0..y1`; `{"x0": self.x0, ...}` | silent |
+| v10 | members `x0..y1`; values read through a nested object | silent |
+| v12 | members `x0..y1` + one literal key that is not a member | **fires** |
+| v13 | members `x0..y1` + an extra key that *is* a member | silent |
+| v3 | members `rect`, `line`; `x0..y1` are properties; values `self.x0` | **fires** |
+| r2 | one key | silent |
 
-    @classmethod
-    def from_dict(cls, raw: dict[str, Any]) -> Word:   # flagged: "bare record collection in parameter 'raw'"
-        return cls(float(raw["x0"]))
+**The trigger: a constant-key dict literal (>= 2 keys) whose keys are not all
+members of the enclosing class.** A member is an attribute the class assigns
+(`self.x = ...`, annotated or not); a `@property` is not a member. The value
+expressions, a second class in the module, and another class's declared fields
+are all irrelevant. A key added *after* the literal
+(`out["note_text"] = ...`) is not part of the literal and does not make it
+fire — which is why one hand-built repro stayed silent while the real site
+fired.
 
-    def to_dict(self) -> dict[str, Any]:               # flagged: "bare record collection as return type"
-        return {"x0": self.x0}                         # flagged: "dict with constant keys {x0} is a record"
-```
-
-Probed on v0.5.0 (one file, `ignore = []`): all three findings, on the pattern
-the message asks for. The rule should exempt a method named `to_dict`/
-`to_json`/`from_dict` (and the literal it builds) — the serialization edge is
-where a bare dict is *correct*; the class is the record. The repo does NOT
-contort code or invent a parallel "wire type" for it: every such site is left
-visible and the rule stays config-ignored for `record-shape` (the config note
-names this section). Roughly 190 of the rule's findings on this tree are this
-bug.
+What that means for the tree: `Word.to_dict` flattens `Rectangle`'s fields
+(`x0..y1`) inside `Word`, whose own members are `rect`, `line` and the
+measures. The rule is right that the shape belongs to `Rectangle`; delegating
+to `self.rect.to_dict()` fixes it, pinned by a test on the persisted
+`words.json` key set and order. A wire envelope (an event payload's
+`{batch, scans}`, an API answer's keys) is a composition with no record to
+delegate to; its why lives in `.lucidlint.toml` with this repro and the
+0.10.0 count. The old "the tool fires on its own pattern" sentence is dead
+evidence and is not reused.
 
 ---
 
@@ -172,7 +181,7 @@ dataset checks must read the real repo tree. The tool's own message
 carves out "real FS semantics (subprocess interop, symlinks, C-level I/O
 like sqlite3)". Suppressed at the tests scope with that citation.
 
-### 2.2 `record-shape` — fixed in code (2026-10-17); what remains is the tool bug (§1.5)
+### 2.2 `record-shape` — the records are classes (2026-10-17); the residual is compositions at the wire edges (re-judged 2026-11-28)
 
 The first full-repo run config-ignored this family on the argument that the
 object model already made the domain records classes. That argument was too
@@ -184,11 +193,16 @@ after the class, its wire format owned by the class (`from_dict`/`to_dict`).
 The refactor landed across `document/`, `pipeline/`, `tools/` and `research/`
 (`document/schemas.py` dissolved; ~150 new record modules).
 
-What the rule still reports is the tool bug of §1.5 — each class's own
-`from_dict`/`to_dict` signature and the dict literal that method builds —
-plus `pipeline/api/server.py`'s route envelopes at the time of writing. The
-rule stays config-ignored so the gate's verdict is not polluted by its own
-bug; the config note points here.
+On 0.10.0 the family is 271 findings, and the trigger is not the old
+"tool bug" claim: it is a constant-key literal whose keys are not all members
+of the enclosing class (§1.5, re-judged with the reduced repro). The
+`constant-key-dict` family's delegation cases are fixed in code (`Word`'s
+`to_dict` delegates to `Rectangle`'s, pinned by a `words.json` key-order
+test); what remains is the compositions — an event payload's `{batch, scans}`,
+an API answer's keys, a row's flattened columns — each a wire envelope with no
+record to delegate to. The config ignore's why names this family and carries
+the repro, so a reader can re-run it; a new bare dict for a record is still a
+review finding.
 
 ### 2.3 `class-module` (12 findings) — config-ignored for `tools/**`
 

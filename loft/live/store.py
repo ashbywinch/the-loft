@@ -65,6 +65,15 @@ class LiveStore:
         return cls(LiveDatabase.create(path, app_version=app_version), app_version)
 
     @classmethod
+    def in_memory(cls, *, app_version: str) -> Self:
+        """The live store over a fresh in-memory database — the tests' store.
+
+        The same engine, schema and transaction semantics as `create`, with no
+        file. Tests that need the file path (WAL, persistence, `VACUUM INTO`) use
+        `create`; everything else uses this and stays hermetic."""
+        return cls(LiveDatabase.in_memory(app_version=app_version), app_version)
+
+    @classmethod
     def open(cls, path: Path, *, app_version: str) -> Self:
         return cls(LiveDatabase.open(path), app_version)
 

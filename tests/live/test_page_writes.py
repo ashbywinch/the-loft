@@ -19,7 +19,6 @@ import pytest
 from document.row_adjustments import RowAdjustments
 from loft.live.compat_pages import PageCompatibility, PageExportError
 from loft.live.errors import NotFound
-from loft.live.memory import MemoryLiveStore
 from loft.live.page_row import PageState
 from loft.live.page_writes import PageWrites
 from loft.live.store import LiveStore
@@ -38,7 +37,7 @@ def store(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[Any]:
     if request.param == "sqlite":
         live = LiveStore.create(tmp_path / "loft.db", app_version="test")
     else:
-        live = MemoryLiveStore(app_version="test")
+        live = LiveStore.in_memory(app_version="test")
     yield live
     live.close()
 

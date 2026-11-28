@@ -35,8 +35,9 @@ class LiveDatabase:
         "PRAGMA recursive_triggers = ON",
     )
 
-    def __init__(self, connection: sqlite3.Connection) -> None:
+    def __init__(self, connection: sqlite3.Connection, *, journal_mode: str = "wal") -> None:
         self.connection: sqlite3.Connection = connection
+        self.journal_mode: str = journal_mode
 
     @classmethod
     def create(
@@ -74,6 +75,28 @@ class LiveDatabase:
         return cls.open(path)
 
     @classmethod
+    def in_memory(cls, *, app_version: str) -> Self:
+        """A fresh in-memory database with the canonical schema — the test store.
+
+        The same DDL, triggers and pragmas as `create`, over SQLite's in-memory
+        engine: transactions, constraints and the hash chain are the ones the
+        file store runs, not a fake. In-memory SQLite has no WAL (it reports
+        `memory`), so the schema check expects that mode here.
+        """
+        connection = sqlite3.connect(":memory:", isolation_level=None, check_same_thread=False)
+        connection.row_factory = sqlite3.Row
+        try:
+            cls._apply_pragmas(connection)
+            Schema.apply(connection, app_version)
+            findings = Schema.verify(connection, journal_mode="memory")
+            if findings:
+                raise SchemaError("; ".join(findings))
+        except BaseException:
+            connection.close()
+            raise
+        return cls(connection, journal_mode="memory")
+
+    @classmethod
     def open(cls, path: Path) -> Self:
         if not path.is_file():
             raise SchemaError(f"no database at {path}")
@@ -92,7 +115,7 @@ class LiveDatabase:
             connection.execute(pragma).fetchall()
 
     def verify_schema(self) -> tuple[str, ...]:
-        return Schema.verify(self.connection)
+        return Schema.verify(self.connection, journal_mode=self.journal_mode)
 
     def close(self) -> None:
         self.connection.close()

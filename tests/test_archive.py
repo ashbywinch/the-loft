@@ -13,7 +13,7 @@ import pytest
 
 from loft.live.compat import CompatibilityExport
 from loft.live.import_identity import sync_from_archive
-from loft.live.memory import MemoryLiveStore
+from loft.live.store import LiveStore
 from pipeline.identification import Identification
 from tools.archive import Archive, ArchiveError
 from tools.gone_place import GonePlace
@@ -1061,11 +1061,11 @@ def test_deciding_an_unknown_entity_returns_none() -> None:
 # -- B1: the identity half writes through the live store ---------------------
 
 
-def _live_archive() -> tuple[Archive, MemoryStore, MemoryLiveStore]:
+def _live_archive() -> tuple[Archive, MemoryStore, LiveStore]:
     """The identified archive with its identity surface flipped to a live
     store and the compatibility exporter bound (REWRITE-PLAN B1)."""
     archive, store = _identified_archive()
-    live = MemoryLiveStore(app_version="test")
+    live = LiveStore.in_memory(app_version="test")
     archive.bind_identity_service(live.identities, CompatibilityExport(live, archive).write)
     sync_from_archive(live, archive)
     return archive, store, live
@@ -1115,14 +1115,14 @@ def test_a_live_identification_delete_ends_the_proposal_through_the_service() ->
 # -- B3b: the proposed queue writes through the live store -------------------
 
 
-def _live_queue_archive() -> tuple[Archive, MemoryStore, MemoryLiveStore]:
+def _live_queue_archive() -> tuple[Archive, MemoryStore, LiveStore]:
     """Empty identity tables flipped to a live store — the proposed queue's
     home (REWRITE-PLAN B3b). The tables' v1 is people.json/places.json; each
     later export appends a version."""
     archive, store = make_archive()
     archive.save_identity("people", validate_identity("people", {"people": [], "relationships": []}))
     archive.save_identity("places", validate_identity("places", {"places": []}))
-    live = MemoryLiveStore(app_version="test")
+    live = LiveStore.in_memory(app_version="test")
     archive.bind_identity_service(live.identities, CompatibilityExport(live, archive).write)
     sync_from_archive(live, archive)
     return archive, store, live

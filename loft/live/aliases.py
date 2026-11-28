@@ -71,37 +71,3 @@ class Aliases:
                  event_seq = excluded.event_seq""",
             (loser_kind, loser_id, survivor_kind, survivor_id, event_seq),
         )
-
-
-class MemoryAliases:
-    """The memory store's alias projection — the same surface, one dict."""
-
-    def __init__(self, entries: dict[tuple[str, str], Alias]) -> None:
-        self.entries: dict[tuple[str, str], Alias] = entries
-
-    def all(self) -> tuple[Alias, ...]:
-        return tuple(self.entries[key] for key in sorted(self.entries))
-
-    def get(self, entity_kind: str, entity_id: str) -> str | None:
-        alias = self.entries.get((entity_kind, entity_id))
-        return None if alias is None else alias.survivor_id
-
-    def losers(self, entity_kind: str) -> frozenset[str]:
-        return frozenset(entity_id for kind, entity_id in self.entries if kind == entity_kind)
-
-    def write(
-        self,
-        *,
-        loser_kind: str,
-        loser_id: str,
-        survivor_kind: str,
-        survivor_id: str,
-        event_seq: int,
-    ) -> None:
-        self.entries[(loser_kind, loser_id)] = Alias(
-            loser_kind=loser_kind,
-            loser_id=loser_id,
-            survivor_kind=survivor_kind,
-            survivor_id=survivor_id,
-            event_seq=event_seq,
-        )

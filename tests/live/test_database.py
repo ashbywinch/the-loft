@@ -35,6 +35,17 @@ def test_create_applies_the_schema_and_records_the_migration(tmp_path: Path) -> 
         db.close()
 
 
+def test_in_memory_applies_the_schema_and_verifies_in_memory_mode() -> None:
+    """The in-memory engine has no WAL, so its verification expects `memory` —
+    the same schema checks the file database runs, with only that mode relaxed."""
+    db = LiveDatabase.in_memory(app_version="test")
+    try:
+        assert db.verify_schema() == ()
+        assert db.connection.execute("PRAGMA journal_mode").fetchone()[0] == "memory"
+    finally:
+        db.close()
+
+
 def test_create_refuses_an_existing_file(tmp_path: Path) -> None:
     path = tmp_path / "loft.db"
     LiveDatabase.create(path, app_version="test").close()

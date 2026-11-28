@@ -18,7 +18,7 @@ import pytest
 from PIL import Image
 
 from loft.live.import_identity import sync_from_archive
-from loft.live.memory import MemoryLiveStore
+from loft.live.store import LiveStore
 from pipeline.api import auth
 from pipeline.api.server import ServerConfig, create_server
 from pipeline.api.session_user import SessionUser
@@ -77,7 +77,7 @@ class ServerFixture:
         client: Any | None = None,
         _reprocess: Any | None = None,
         registry_dir: Path | None = None,
-        live: MemoryLiveStore | None = None,
+        live: LiveStore | None = None,
     ) -> None:
         self.store: MemoryStore = store
         self.live = live
@@ -206,7 +206,7 @@ def server(tmp_path: Path) -> Iterator[ServerFixture]:
 def live_server(tmp_path: Path) -> Iterator[ServerFixture]:
     """B1's flipped host: the identity surface writes through the live store,
     and the compatibility exporter keeps the archive's old tables current."""
-    live = MemoryLiveStore(app_version="test")
+    live = LiveStore.in_memory(app_version="test")
     fixture = ServerFixture(make_app_data(tmp_path), MemoryStore(), live=live)
     sync_from_archive(live, fixture.archive)
     yield fixture

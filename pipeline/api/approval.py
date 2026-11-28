@@ -161,10 +161,10 @@ class _DocumentPages:
     which are approved, and the text the approved ones make."""
 
     def __init__(self, record: BatchRecord, artefacts: BatchArtefacts, document: Boundary) -> None:
-        self.artefacts = artefacts
-        self.document = document
-        self.classify = classification_of(artefacts)
-        self.record = record
+        self.artefacts: BatchArtefacts = artefacts
+        self.document: Boundary = document
+        self.classify: dict[str, Any] = classification_of(artefacts)
+        self.record: BatchRecord = record
 
     def text_pages(self) -> list[str]:
         if not self.classify:

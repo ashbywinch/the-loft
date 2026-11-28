@@ -29,8 +29,8 @@ class Documents:
     """The document collection: read through the store, write through a change."""
 
     def __init__(self, connection: sqlite3.Connection, change: Change | None = None) -> None:
-        self.projection = DocumentProjection(connection)
-        self.change = change
+        self.projection: DocumentProjection = DocumentProjection(connection)
+        self.change: Change | None = change
 
     # -- reads -------------------------------------------------------------
 

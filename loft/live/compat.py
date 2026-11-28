@@ -103,9 +103,9 @@ class CompatibilityExport:
     """Rewrite the old-shape identity tables and proposed queue from the live store."""
 
     def __init__(self, store: IdentityStore, archive: Archive) -> None:
-        self.store = store
-        self.archive = archive
-        self.queue = ProposedCompatibility(store, archive)
+        self.store: IdentityStore = store
+        self.archive: Archive = archive
+        self.queue: ProposedCompatibility = ProposedCompatibility(store, archive)
 
     def write(self) -> tuple[str, ...]:
         """Write every table whose content moved and maintain the queue files;

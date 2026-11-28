@@ -503,7 +503,7 @@ class Components:
     SHAPE_MIN_AREA = 60  # 1/2 px²: smaller components are specks
 
     def __init__(self) -> None:
-        self._components = UnionFind()
+        self._components: UnionFind = UnionFind()
         self.rows: list[list[ColumnRun]] = []
         self._previous: list[ColumnRun] = []
 

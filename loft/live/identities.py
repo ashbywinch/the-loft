@@ -24,7 +24,7 @@ class Identities:
     """The identity write surface: the review's verbs, each one change."""
 
     def __init__(self, store: IdentityStore) -> None:
-        self.store = store
+        self.store: IdentityStore = store
 
     # -- reads -------------------------------------------------------------
 

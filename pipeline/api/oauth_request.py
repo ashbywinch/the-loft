@@ -16,8 +16,8 @@ class OAuthRequest:
     MAX_AGE_SECONDS = 600
 
     def __init__(self, code_verifier: str, created_at: float) -> None:
-        self.code_verifier = code_verifier
-        self.created_at = created_at
+        self.code_verifier: str = code_verifier
+        self.created_at: float = created_at
 
     @classmethod
     def started(cls, code_verifier: str) -> OAuthRequest:

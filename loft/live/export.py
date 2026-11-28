@@ -75,8 +75,8 @@ class HumanArchive:
     CONTENT_KINDS: ClassVar[dict[str, str]] = {"story": "story.txt", "transcription": "transcription.txt"}
 
     def __init__(self, store: LiveStore, out: Path) -> None:
-        self.store = store
-        self.out = out
+        self.store: LiveStore = store
+        self.out: Path = out
         self._items: tuple[Item, ...] = ()
         self._tree: DateTree | None = None
 

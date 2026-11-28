@@ -290,9 +290,9 @@ class Collection:
     """One identity collection on a connection (read) or a change (write)."""
 
     def __init__(self, connection: sqlite3.Connection, kind: Kind, change: Any | None = None) -> None:
-        self.connection = connection
-        self.kind = kind
-        self.change = change
+        self.connection: sqlite3.Connection = connection
+        self.kind: Kind = kind
+        self.change: Any | None = change
 
     def get(self, entity_id: str) -> Any | None:
         row = self.connection.execute(

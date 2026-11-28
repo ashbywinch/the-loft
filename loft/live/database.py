@@ -36,7 +36,7 @@ class LiveDatabase:
     )
 
     def __init__(self, connection: sqlite3.Connection) -> None:
-        self.connection = connection
+        self.connection: sqlite3.Connection = connection
 
     @classmethod
     def create(

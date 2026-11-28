@@ -61,8 +61,8 @@ def atomic_write(path: Path, content: str | bytes) -> None:
         # only when its directory entry is — a crash can otherwise leave the
         # old name (or no name) after the caller was told the file was written
         _fsync_directory(path.parent)
-    # then re-raises
-    # lucidlint: ignore broad-except BaseException guarantees temp cleanup on EVERY exit path (incl. KeyboardInterrupt),
+    # BaseException guarantees temp cleanup on EVERY exit path (incl.
+    # KeyboardInterrupt), then re-raises
     except BaseException:
         _ = tmp.unlink(missing_ok=True)
         raise
